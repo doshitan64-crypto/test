@@ -1,0 +1,2363 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Phigros 譜面シミュレーター (日本語版)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --phi-cyan: #00f0ff;
+            --phi-gold: #ffd700;
+            --phi-pink: #ff2a6d;
+            --phi-bg: #070b14;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--phi-bg);
+            color: #f8fafc;
+            font-family: 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        body.pseudo-fullscreen {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100vw !important;
+            height: 100dvh !important;
+            z-index: 9999 !important;
+        }
+
+        .font-cyber {
+            font-family: 'Rajdhani', 'Noto Sans JP', sans-serif;
+        }
+
+        .phi-cut {
+            clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+        }
+
+        .bg-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(0, 240, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(0, 240, 255, 0.05) 1px, transparent 1px);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.15);
+            height: 6px;
+            border-radius: 999px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--phi-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--phi-cyan);
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:active {
+            transform: scale(1.25);
+        }
+
+        @keyframes borderPulse {
+            0%, 100% { border-color: rgba(0, 240, 255, 0.85); box-shadow: inset 0 0 40px rgba(0, 240, 255, 0.25); }
+            50% { border-color: rgba(255, 215, 0, 0.95); box-shadow: inset 0 0 60px rgba(255, 215, 0, 0.3); }
+        }
+        .drop-active-box {
+            animation: borderPulse 1.5s infinite ease-in-out;
+        }
+
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: rgba(0, 240, 255, 0.4);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-grid relative flex items-center justify-center">
+
+    <!-- 画面全体ドラッグ＆ドロップ オーバーレイ -->
+    <div id="dropOverlay" class="fixed inset-0 z-50 hidden bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-6 pointer-events-none transition-opacity duration-200">
+        <div class="drop-active-box w-full h-full border-4 border-dashed border-cyan-400 rounded-3xl flex flex-col items-center justify-center text-center p-8">
+            <div class="w-24 h-24 mb-6 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shadow-[0_0_30px_rgba(0,240,255,0.4)]">
+                <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+            </div>
+            <h2 class="text-2xl sm:text-4xl font-black tracking-wider text-white mb-3">ここにファイルをドロップして読み込み</h2>
+            <p class="text-cyan-300 text-base sm:text-lg font-medium max-w-xl">
+                譜面 (.json / .pec)、楽曲 (.mp3 / .ogg / .wav)、背景画像 (.png / .jpg)、<br>
+                またはこれらをまとめた <span class="text-amber-300 font-bold">.zip ファイル</span> を一括でドロップできます
+            </p>
+        </div>
+    </div>
+
+    <!-- トースト通知エリア -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-4 sm:px-0"></div>
+
+    <!-- メインゲームコンテナ -->
+    <div id="appWrapper" class="relative w-full h-full flex items-center justify-center overflow-hidden">
+        <canvas id="gameCanvas" class="block shadow-2xl bg-slate-950"></canvas>
+
+        <div id="hudOverlay" class="hidden absolute top-0 left-0 right-0 p-3 sm:p-5 flex justify-between items-start pointer-events-none z-20">
+            <div class="flex items-center gap-2 pointer-events-auto">
+                <button id="pauseBtn" class="p-3 rounded-xl bg-slate-900/75 hover:bg-cyan-950/90 border border-white/20 hover:border-cyan-400 text-white backdrop-blur-sm transition active:scale-95 flex items-center gap-2 shadow-lg" title="一時停止 (Esc)">
+                    <svg class="w-5 h-5 sm:w-6 sm:h-6 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                    </svg>
+                    <span class="hidden sm:inline text-xs font-bold tracking-wider">一時停止</span>
+                </button>
+            </div>
+
+            <div id="autoBadge" class="hidden px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-400/70 text-amber-300 text-xs sm:text-sm font-bold tracking-widest backdrop-blur-sm shadow-[0_0_15px_rgba(255,215,0,0.3)]">
+                AUTO PLAY 稼働中
+            </div>
+        </div>
+    </div>
+
+    <!-- メインメニュー -->
+    <div id="mainMenu" class="fixed inset-0 z-30 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md">
+        <div class="w-full max-w-5xl bg-slate-900/95 border border-cyan-500/30 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col max-h-[95vh]">
+            
+            <div class="px-5 py-4 sm:px-7 sm:py-5 bg-gradient-to-r from-slate-950 via-slate-900 to-cyan-950/40 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-3 h-8 bg-cyan-400 rounded-sm shadow-[0_0_12px_#00f0ff]"></div>
+                    <div>
+                        <h1 class="text-xl sm:text-2xl font-black tracking-wider text-white flex items-center gap-2">
+                            PHIGROS SIMULATOR
+                            <span class="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 font-bold">日本語版</span>
+                        </h1>
+                        <p class="text-xs text-slate-400">横方向厳密・縦方向どこでもタップ判定・マルチタッチ・Arcaea式音ズレ調整対応</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="fullscreenToggleBtn px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-cyan-950 border border-cyan-500/40 text-xs sm:text-sm font-bold text-cyan-300 flex items-center gap-1.5 transition active:scale-95">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l-5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+                        </svg>
+                        <span class="fsBtnLabel">全画面</span>
+                    </button>
+                    <button id="openGuideBtn" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5 transition active:scale-95">
+                        <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        操作ガイド
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-5 sm:p-7 overflow-y-auto custom-scroll grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <div class="lg:col-span-7 flex flex-col gap-4">
+                    <div id="menuDropZone" class="relative group rounded-2xl border-2 border-dashed border-cyan-500/50 hover:border-cyan-400 bg-slate-950/60 p-5 text-center transition-all cursor-pointer">
+                        <input type="file" id="fileInput" multiple accept=".json,.pec,.mp3,.ogg,.wav,.m4a,.aac,.flac,.png,.jpg,.jpeg,.webp,.zip,.txt,.csv" class="hidden">
+                        <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden">
+                        
+                        <div class="flex flex-col items-center justify-center">
+                            <div class="w-12 h-12 mb-3 rounded-xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm sm:text-base font-bold text-white mb-1">
+                                画面のどこにでもファイルをドロップして読み込み
+                            </p>
+                            <p class="text-xs text-slate-400 mb-4">
+                                iPadのSplit Viewからのドロップ、またはボタンから譜面・音源・ZIPを選択してください
+                            </p>
+                            <div class="flex flex-wrap items-center justify-center gap-2.5 w-full">
+                                <button type="button" id="selectFilesBtn" class="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs sm:text-sm shadow-[0_0_15px_rgba(0,240,255,0.3)] transition active:scale-95 flex items-center gap-1.5">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    ファイル / ZIP を選択
+                                </button>
+                                <button type="button" id="selectFolderBtn" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-slate-200 font-bold text-xs sm:text-sm transition active:scale-95 flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                    フォルダを選択
+                                </button>
+                                <button type="button" id="clearAssetsBtn" class="px-3.5 py-2.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/40 text-rose-200 font-bold text-xs sm:text-sm transition active:scale-95">
+                                    クリア
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-950/70 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
+                        <div class="flex items-center justify-between border-b border-white/10 pb-2">
+                            <span class="text-xs font-bold text-slate-400 tracking-wider">読み込みステータス</span>
+                            <span id="readyStatusBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-400/40 font-bold">譜面と音源を読み込んでください</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            <div class="sm:col-span-2">
+                                <label class="block text-[11px] text-slate-400 mb-1">楽曲タイトル</label>
+                                <input type="text" id="songTitleInput" placeholder="楽曲を読み込むと自動入力されます" value="" class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-sm font-bold text-white focus:border-cyan-400 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] text-slate-400 mb-1">難易度表記</label>
+                                <input type="text" id="difficultyInput" value="IN Lv.15" class="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-white/15 text-sm font-bold text-cyan-300 focus:border-cyan-400 outline-none">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                            <div id="chartSlotCard" class="p-2.5 rounded-xl bg-slate-900/90 border border-rose-500/30 flex flex-col justify-between transition-colors">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-xs font-bold text-cyan-400">譜面データ <span class="text-rose-400">*必須</span></span>
+                                    <span id="chartStatusDot" class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                                </div>
+                                <p id="chartFileName" class="text-xs text-slate-400 truncate font-medium">未読み込み (.json / .pec)</p>
+                                <p id="noteCountText" class="text-[11px] text-slate-500 mt-0.5">総ノーツ数: -</p>
+                            </div>
+                            <div id="audioSlotCard" class="p-2.5 rounded-xl bg-slate-900/90 border border-rose-500/30 flex flex-col justify-between transition-colors">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-xs font-bold text-amber-400">楽曲音源 <span class="text-rose-400">*必須</span></span>
+                                    <span id="audioStatusDot" class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                                </div>
+                                <p id="audioFileName" class="text-xs text-slate-400 truncate font-medium">未読み込み (.mp3 / .ogg / .wav)</p>
+                                <p id="audioDurationText" class="text-[11px] text-slate-500 mt-0.5">再生時間: --:--</p>
+                            </div>
+                            <div id="bgSlotCard" class="p-2.5 rounded-xl bg-slate-900/90 border border-white/10 flex flex-col justify-between transition-colors">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-xs font-bold text-pink-400">背景イラスト <span class="text-slate-500">(任意)</span></span>
+                                    <span id="bgStatusDot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+                                </div>
+                                <p id="bgFileName" class="text-xs text-slate-400 truncate font-medium">デフォルト幾何学背景</p>
+                                <p class="text-[11px] text-slate-500 mt-0.5">PNG / JPG 対応</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-5 flex flex-col justify-between gap-4">
+                    <div class="bg-slate-950/70 border border-white/10 rounded-2xl p-4 flex flex-col gap-3.5">
+                        <h3 class="text-xs font-bold text-cyan-300 tracking-wider border-b border-white/10 pb-2">譜面・判定設定</h3>
+
+                        <div class="p-3 rounded-xl bg-slate-900/90 border border-cyan-500/30 flex items-center justify-between gap-2">
+                            <div>
+                                <span class="text-xs font-bold text-slate-200 block">音ズレ調整 (オフセット)</span>
+                                <span id="offsetValText" class="font-cyber text-lg font-black text-cyan-300">0 ms</span>
+                            </div>
+                            <button type="button" id="openCalibrationBtn" class="px-3.5 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-200 font-bold text-xs sm:text-sm transition active:scale-95 flex items-center gap-1.5 shadow-[0_0_12px_rgba(0,240,255,0.2)]">
+                                <svg class="w-4 h-4 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                音ズレ調整を開く
+                            </button>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">ノーツサイズ倍率</span>
+                                <span id="noteScaleValText" class="font-cyber font-bold text-cyan-300">1.00x</span>
+                            </div>
+                            <input type="range" id="noteScaleSlider" min="0.6" max="1.5" step="0.05" value="1.0" class="w-full">
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">背景の明るさ</span>
+                                <span id="bgDimValText" class="font-cyber font-bold text-cyan-300">40%</span>
+                            </div>
+                            <input type="range" id="bgDimSlider" min="10" max="90" step="5" value="40" class="w-full">
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">再生速度 (練習用)</span>
+                                <span id="speedValText" class="font-cyber font-bold text-cyan-300">1.00x</span>
+                            </div>
+                            <input type="range" id="speedSlider" min="0.5" max="1.5" step="0.05" value="1.0" class="w-full">
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            <label class="sm:col-span-2 flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-amber-400/30 cursor-pointer hover:border-amber-400/70 transition">
+                                <div>
+                                    <span class="text-xs font-bold text-amber-300 block">同時押しハイライト（黄色発光）</span>
+                                    <span class="text-[10px] text-slate-400">同タイミングの複数ノーツを本家風の金色フレームで強調</span>
+                                </div>
+                                <input type="checkbox" id="highlightToggle" checked class="w-4 h-4 accent-amber-400 rounded">
+                            </label>
+                            <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-white/10 cursor-pointer hover:border-amber-400/50 transition">
+                                <span class="text-xs font-bold text-slate-200">オートプレイ</span>
+                                <input type="checkbox" id="autoPlayToggle" class="w-4 h-4 accent-amber-400 rounded">
+                            </label>
+                            <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-white/10 cursor-pointer hover:border-cyan-400/50 transition">
+                                <span class="text-xs font-bold text-slate-200">ヒット音 (SE)</span>
+                                <input type="checkbox" id="hitSoundToggle" checked class="w-4 h-4 accent-cyan-400 rounded">
+                            </label>
+                        </div>
+                    </div>
+
+                    <button id="startGameBtn" disabled class="phi-cut w-full py-4 px-6 bg-slate-800 text-slate-500 cursor-not-allowed font-black text-lg sm:text-xl tracking-widest transition transform flex items-center justify-center gap-3">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <span id="startBtnText">譜面と音源を読み込んでください</span>
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 音ズレ調整モーダル -->
+    <div id="calibrationModal" class="hidden fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-lg flex items-center justify-center p-3 sm:p-6">
+        <div class="w-full max-w-xl bg-slate-900 border border-cyan-400/50 rounded-2xl shadow-[0_0_50px_rgba(0,240,255,0.25)] overflow-hidden flex flex-col">
+            <div class="px-6 py-4 bg-slate-950 border-b border-white/10 flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg sm:text-xl font-black text-white tracking-wider flex items-center gap-2">
+                        音ズレ調整
+                        <span class="text-[11px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40">AUDIO OFFSET</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">メトロノームの音に合わせて下のパッドをタップ（またはSpaceキー）してください</p>
+                </div>
+                <button id="closeCalibrationBtn" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <div class="p-5 sm:p-6 flex flex-col items-center gap-5">
+                <div class="flex items-center justify-center gap-4">
+                    <div id="calBeat0" class="w-5 h-5 rounded-full bg-slate-800 border border-white/20 transition-all duration-75"></div>
+                    <div id="calBeat1" class="w-4 h-4 rounded-full bg-slate-800 border border-white/20 transition-all duration-75"></div>
+                    <div id="calBeat2" class="w-4 h-4 rounded-full bg-slate-800 border border-white/20 transition-all duration-75"></div>
+                    <div id="calBeat3" class="w-4 h-4 rounded-full bg-slate-800 border border-white/20 transition-all duration-75"></div>
+                </div>
+
+                <div class="w-full bg-slate-950/90 border border-white/10 rounded-2xl p-4">
+                    <div class="flex justify-between items-end mb-2">
+                        <span class="text-xs font-black tracking-widest text-cyan-400">EARLY (早い)</span>
+                        <div class="text-center">
+                            <span id="calCurrentOffsetDisplay" class="font-cyber text-3xl sm:text-4xl font-black text-white">0 ms</span>
+                            <span id="calTapCountText" class="block text-[11px] text-slate-400">計測回数: 0 回</span>
+                        </div>
+                        <span class="text-xs font-black tracking-widest text-amber-400">LATE (遅い)</span>
+                    </div>
+
+                    <div class="relative w-full h-10 bg-slate-900 rounded-xl border border-white/10 overflow-hidden flex items-center">
+                        <div class="absolute inset-y-0 left-1/4 w-px bg-white/10"></div>
+                        <div class="absolute inset-y-0 left-3/4 w-px bg-white/10"></div>
+                        <div class="absolute inset-y-0 left-1/2 -translate-x-1/2 w-1 bg-emerald-400 shadow-[0_0_10px_#34d399] z-10"></div>
+                        <div id="calMarkersContainer" class="absolute inset-0 pointer-events-none"></div>
+                        <div id="calAvgMarker" class="absolute top-1 bottom-1 w-2 -ml-1 rounded-full bg-white shadow-[0_0_12px_#ffffff] transition-all duration-150 z-20" style="left: 50%;"></div>
+                    </div>
+                    <div class="flex justify-between text-[10px] font-cyber text-slate-500 mt-1 px-1">
+                        <span>-150ms</span>
+                        <span>-75ms</span>
+                        <span class="text-emerald-400 font-bold">0ms</span>
+                        <span>+75ms</span>
+                        <span>+150ms</span>
+                    </div>
+                </div>
+
+                <button type="button" id="calTapPad" class="w-full py-7 sm:py-8 rounded-2xl bg-gradient-to-b from-cyan-950/70 to-slate-950 hover:from-cyan-900/70 active:scale-[0.98] border-2 border-cyan-400/70 shadow-[0_0_25px_rgba(0,240,255,0.2)] flex flex-col items-center justify-center transition-transform cursor-pointer">
+                    <span class="text-lg sm:text-xl font-black text-white tracking-widest mb-1">リズムに合わせてタップ</span>
+                    <span id="calLastDeltaText" class="font-cyber text-xs font-bold text-cyan-300">タップして計測開始</span>
+                </button>
+
+                <div class="w-full flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" data-delta="-10" class="calFineBtn px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 font-cyber font-bold text-xs sm:text-sm text-cyan-300 active:scale-95">-10ms</button>
+                    <button type="button" data-delta="-1" class="calFineBtn px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 font-cyber font-bold text-xs sm:text-sm text-cyan-300 active:scale-95">-1ms</button>
+                    <button type="button" id="calResetBtn" class="px-4 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/40 font-bold text-xs sm:text-sm text-rose-200 active:scale-95">リセット</button>
+                    <button type="button" data-delta="1" class="calFineBtn px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 font-cyber font-bold text-xs sm:text-sm text-amber-300 active:scale-95">+1ms</button>
+                    <button type="button" data-delta="10" class="calFineBtn px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 font-cyber font-bold text-xs sm:text-sm text-amber-300 active:scale-95">+10ms</button>
+                </div>
+
+                <div class="w-full grid grid-cols-2 gap-3 pt-1">
+                    <button type="button" id="calCancelBtn" class="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-slate-200 font-bold text-sm transition active:scale-95">
+                        キャンセル
+                    </button>
+                    <button type="button" id="calApplyBtn" class="py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-sm tracking-wider shadow-[0_0_20px_rgba(0,240,255,0.4)] transition active:scale-95">
+                        この値で適用する
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 一時停止モーダル -->
+    <div id="pauseModal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="w-full max-w-md bg-slate-900 border border-cyan-500/40 rounded-2xl p-6 text-center shadow-2xl">
+            <h2 class="text-2xl font-black text-white tracking-wider mb-1">一時停止</h2>
+            <p id="pauseSongTitle" class="text-xs text-cyan-300 mb-6 truncate">-</p>
+
+            <div class="flex flex-col gap-3">
+                <button id="resumeBtn" class="w-full py-3.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-base tracking-wider transition active:scale-95">
+                    プレイを再開する
+                </button>
+                <button id="retryBtn" class="w-full py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-white font-bold text-base tracking-wider transition active:scale-95">
+                    最初からやり直す (リトライ)
+                </button>
+                <button class="fullscreenToggleBtn w-full py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-cyan-500/30 text-cyan-300 font-bold text-sm tracking-wider transition active:scale-95">
+                    <span class="fsBtnLabel">全画面表示切替</span>
+                </button>
+                <button id="pauseBackToMenuBtn" class="w-full py-3.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-200 font-bold text-base tracking-wider transition active:scale-95">
+                    選曲・読み込み画面へ戻る
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- リザルト画面 -->
+    <div id="resultModal" class="hidden fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-lg flex items-center justify-center p-4">
+        <div class="w-full max-w-2xl bg-slate-900/95 border border-cyan-400/40 rounded-2xl overflow-hidden shadow-[0_0_60px_rgba(0,240,255,0.2)]">
+            <div class="px-6 py-4 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 border-b border-white/10 flex items-center justify-between">
+                <div>
+                    <span id="resultDiffBadge" class="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 font-bold">IN Lv.15</span>
+                    <h2 id="resultSongTitle" class="text-lg sm:text-xl font-black text-white mt-1">-</h2>
+                </div>
+                <div id="resultClearType" class="px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 font-cyber font-bold text-sm tracking-widest">
+                    FULL COMBO
+                </div>
+            </div>
+
+            <div class="p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-around gap-6 border-b border-white/10">
+                <div class="relative w-32 h-32 rounded-2xl bg-slate-950 border-2 border-cyan-400/50 flex flex-col items-center justify-center shadow-[0_0_30px_rgba(0,240,255,0.25)]">
+                    <span class="text-[10px] text-slate-400 tracking-widest uppercase">RANK</span>
+                    <span id="resultRank" class="font-cyber text-6xl font-black text-amber-300 drop-shadow-[0_0_15px_rgba(255,215,0,0.6)]">φ</span>
+                </div>
+
+                <div class="text-center sm:text-left">
+                    <p class="text-xs text-slate-400 font-bold tracking-wider mb-1">TOTAL SCORE</p>
+                    <p id="resultScore" class="font-cyber text-4xl sm:text-5xl font-black text-white tracking-wider mb-3">0000000</p>
+                    <div class="flex flex-wrap justify-center sm:justify-start gap-4 text-sm">
+                        <div>
+                            <span class="text-slate-400 text-xs block">最大コンボ</span>
+                            <span id="resultMaxCombo" class="font-cyber font-bold text-cyan-300 text-lg">0</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-400 text-xs block">精度 (ACC)</span>
+                            <span id="resultAccuracy" class="font-cyber font-bold text-emerald-300 text-lg">0.00%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-slate-950/60 grid grid-cols-4 gap-2 text-center">
+                <div class="p-2 rounded-xl bg-slate-900/80 border border-amber-400/20">
+                    <span class="block text-xs font-bold text-amber-300">PERFECT</span>
+                    <span id="resPerfect" class="font-cyber text-xl font-bold text-white">0</span>
+                </div>
+                <div class="p-2 rounded-xl bg-slate-900/80 border border-cyan-400/20">
+                    <span class="block text-xs font-bold text-cyan-300">GOOD</span>
+                    <span id="resGood" class="font-cyber text-xl font-bold text-white">0</span>
+                </div>
+                <div class="p-2 rounded-xl bg-slate-900/80 border border-purple-400/20">
+                    <span class="block text-xs font-bold text-purple-300">BAD</span>
+                    <span id="resBad" class="font-cyber text-xl font-bold text-white">0</span>
+                </div>
+                <div class="p-2 rounded-xl bg-slate-900/80 border border-rose-400/20">
+                    <span class="block text-xs font-bold text-rose-400">MISS</span>
+                    <span id="resMiss" class="font-cyber text-xl font-bold text-white">0</span>
+                </div>
+            </div>
+
+            <div class="p-5 flex flex-col sm:flex-row gap-3">
+                <button id="resultRetryBtn" class="flex-1 py-3.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-base tracking-wider transition active:scale-95">
+                    もう一度プレイ
+                </button>
+                <button id="resultMenuBtn" class="flex-1 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-white font-bold text-base tracking-wider transition active:scale-95">
+                    メニューへ戻る
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作ガイドモーダル -->
+    <div id="guideModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="w-full max-w-2xl bg-slate-900 border border-cyan-500/40 rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[88vh]">
+            <div class="px-6 py-4 bg-slate-950 border-b border-white/10 flex items-center justify-between">
+                <h2 class="text-lg font-black text-white">操作ガイド・対応ファイル形式</h2>
+                <button id="closeGuideBtn" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scroll space-y-5 text-sm text-slate-300 leading-relaxed">
+                <div>
+                    <h3 class="text-cyan-400 font-bold text-base mb-1.5">1. 判定仕様（横方向厳密 ＆ 縦方向どこでも）</h3>
+                    <p>
+                        横方向はノーツの配置位置（厳密な横幅）に合わせて判定しつつ、縦方向（判定ラインからの上下のズレ）はどこをタッチしても反応する本家仕様に調整されています。
+                    </p>
+                </div>
+                <div>
+                    <h3 class="text-amber-400 font-bold text-base mb-1.5">2. タブレット・PCでのファイル読み込み方法</h3>
+                    <ul class="list-disc list-inside space-y-1 text-slate-300">
+                        <li><strong class="text-white">画面全体ドロップ：</strong>iPadの「ファイル」アプリ等をSplit Viewで横に開き、譜面・音源・画像・ZIPファイルをこのブラウザ画面へ直接ドラッグ＆ドロップできます。</li>
+                        <li><strong class="text-white">一括読み込み (.zip)：</strong>譜面JSON/PEC、音源MP3/OGGが入ったZIPファイルをそのままドロップすると自動で解析・セットします。</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="px-6 py-3.5 bg-slate-950 border-t border-white/10 text-right">
+                <button id="closeGuideBtnBottom" class="px-5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-sm">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+function safeNum(val, fallback = 0) {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+const AppState = {
+    isPlaying: false,
+    isPaused: false,
+    pseudoFullscreen: false,
+    title: "",
+    difficulty: "IN Lv.15",
+    chart: null,
+    chartFileName: "",
+    totalNotes: 0,
+    audioBuffer: null,
+    audioFileName: "",
+    audioDuration: 0,
+    bgImage: null,
+    bgFileName: "",
+    settings: {
+        offsetMs: 0,
+        noteScale: 1.0,
+        bgBrightness: 0.4,
+        playbackRate: 1.0,
+        autoPlay: false,
+        hitSound: true,
+        multiHighlight: true
+    },
+    stats: {
+        perfect: 0,
+        good: 0,
+        bad: 0,
+        miss: 0,
+        combo: 0,
+        maxCombo: 0,
+        score: 0
+    },
+    effects: [],
+    judgePopups: [],
+    pointers: new Map()
+};
+
+class SoundEngine {
+    constructor() {
+        this.ctx = null;
+        this.sourceNode = null;
+        this.gainNode = null;
+        this.startTime = 0;
+        this.pauseOffset = 0;
+        this.isRunning = false;
+    }
+
+    init() {
+        if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                this.ctx = new AudioCtx();
+            }
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(() => {});
+        }
+    }
+
+    async decodeAudio(arrayBuffer) {
+        this.init();
+        if (!this.ctx) throw new Error("Web Audio APIがサポートされていません");
+        return await this.ctx.decodeAudioData(arrayBuffer);
+    }
+
+    playHitSound(type = 1) {
+        if (!AppState.settings.hitSound) return;
+        this.init();
+        if (!this.ctx) return;
+
+        try {
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            if (type === 4) {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(1400, now);
+                osc.frequency.exponentialRampToValueAtTime(2800, now + 0.045);
+                gain.gain.setValueAtTime(0.28, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+            } else if (type === 2) {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1850, now);
+                osc.frequency.exponentialRampToValueAtTime(900, now + 0.03);
+                gain.gain.setValueAtTime(0.18, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+            } else {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1050, now);
+                osc.frequency.exponentialRampToValueAtTime(240, now + 0.045);
+                gain.gain.setValueAtTime(0.32, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+            }
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.065);
+        } catch (e) {}
+    }
+
+    async startMusic(offsetSec = 0) {
+        if (!AppState.audioBuffer) return;
+        this.stopMusic();
+        this.init();
+        if (!this.ctx) return;
+
+        const rate = safeNum(AppState.settings.playbackRate, 1.0);
+        this.sourceNode = this.ctx.createBufferSource();
+        this.sourceNode.buffer = AppState.audioBuffer;
+        this.sourceNode.playbackRate.value = rate;
+
+        this.gainNode = this.ctx.createGain();
+        this.gainNode.gain.value = 0.8;
+
+        this.sourceNode.connect(this.gainNode);
+        this.gainNode.connect(this.ctx.destination);
+
+        this.pauseOffset = offsetSec;
+        if (offsetSec < 0) {
+            const delay = Math.abs(offsetSec) / rate;
+            this.sourceNode.start(this.ctx.currentTime + delay, 0);
+            this.startTime = this.ctx.currentTime + delay;
+        } else {
+            this.sourceNode.start(0, offsetSec);
+            this.startTime = this.ctx.currentTime - (offsetSec / rate);
+        }
+        this.isRunning = true;
+    }
+
+    stopMusic() {
+        if (this.sourceNode) {
+            try { this.sourceNode.stop(); } catch (e) {}
+            try { this.sourceNode.disconnect(); } catch (e) {}
+            this.sourceNode = null;
+        }
+        this.isRunning = false;
+    }
+
+    getCurrentTime() {
+        if (!this.isRunning || !this.ctx) return this.pauseOffset;
+        const rate = safeNum(AppState.settings.playbackRate, 1.0);
+        return (this.ctx.currentTime - this.startTime) * rate;
+    }
+}
+
+const soundEngine = new SoundEngine();
+
+class OffsetCalibrator {
+    constructor() {
+        this.isActive = false;
+        this.bpm = 120;
+        this.beatInterval = 60 / this.bpm;
+        this.startAudioTime = 0;
+        this.nextScheduleTime = 0;
+        this.beatIndex = 0;
+        this.timerId = null;
+        this.rafId = null;
+        this.samples = [];
+        this.tempOffsetMs = 0;
+    }
+
+    open() {
+        soundEngine.init();
+        if (!soundEngine.ctx) return;
+
+        this.tempOffsetMs = AppState.settings.offsetMs;
+        this.samples = [];
+        this.isActive = true;
+
+        this.updateUI();
+        document.getElementById('calMarkersContainer').innerHTML = '';
+        document.getElementById('calLastDeltaText').textContent = 'タップして計測開始';
+        document.getElementById('calibrationModal').classList.remove('hidden');
+
+        const now = soundEngine.ctx.currentTime;
+        this.startAudioTime = now + 0.15;
+        this.nextScheduleTime = this.startAudioTime;
+        this.beatIndex = 0;
+
+        this.timerId = setInterval(() => this.scheduleBeats(), 25);
+        this.rafId = requestAnimationFrame(() => this.updateVisualBeats());
+    }
+
+    close() {
+        this.isActive = false;
+        if (this.timerId) {
+            clearInterval(this.timerId);
+            this.timerId = null;
+        }
+        if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        document.getElementById('calibrationModal').classList.add('hidden');
+    }
+
+    scheduleBeats() {
+        if (!this.isActive || !soundEngine.ctx) return;
+        const lookahead = 0.12;
+        while (this.nextScheduleTime < soundEngine.ctx.currentTime + lookahead) {
+            const isAccent = (this.beatIndex % 4 === 0);
+            this.playClick(this.nextScheduleTime, isAccent);
+            this.nextScheduleTime += this.beatInterval;
+            this.beatIndex++;
+        }
+    }
+
+    playClick(time, isAccent) {
+        if (!soundEngine.ctx) return;
+        try {
+            const ctx = soundEngine.ctx;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(isAccent ? 1320 : 880, time);
+            osc.frequency.exponentialRampToValueAtTime(isAccent ? 660 : 440, time + 0.04);
+
+            gain.gain.setValueAtTime(isAccent ? 0.45 : 0.3, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.055);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(time);
+            osc.stop(time + 0.06);
+        } catch (e) {}
+    }
+
+    updateVisualBeats() {
+        if (!this.isActive || !soundEngine.ctx) return;
+        const now = soundEngine.ctx.currentTime;
+        const elapsed = now - this.startAudioTime;
+
+        if (elapsed >= 0) {
+            const totalBeats = Math.floor(elapsed / this.beatInterval);
+            const currentBeatInBar = totalBeats % 4;
+            const beatProgress = (elapsed % this.beatInterval) / this.beatInterval;
+
+            for (let i = 0; i < 4; i++) {
+                const dot = document.getElementById(`calBeat${i}`);
+                if (!dot) continue;
+                if (i === currentBeatInBar && beatProgress < 0.35) {
+                    dot.className = i === 0
+                        ? 'w-6 h-6 rounded-full bg-amber-400 shadow-[0_0_16px_#ffd700] scale-110 transition-all duration-75'
+                        : 'w-5 h-5 rounded-full bg-cyan-400 shadow-[0_0_14px_#00f0ff] scale-110 transition-all duration-75';
+                } else {
+                    dot.className = i === 0
+                        ? 'w-5 h-5 rounded-full bg-slate-800 border border-amber-400/40 transition-all duration-75'
+                        : 'w-4 h-4 rounded-full bg-slate-800 border border-white/20 transition-all duration-75';
+                }
+            }
+        }
+        this.rafId = requestAnimationFrame(() => this.updateVisualBeats());
+    }
+
+    recordTap() {
+        if (!this.isActive || !soundEngine.ctx) return;
+        const tapTime = soundEngine.ctx.currentTime;
+        const elapsed = tapTime - this.startAudioTime;
+        if (elapsed < -0.25) return;
+
+        const nearestBeatNum = Math.round(elapsed / this.beatInterval);
+        const nearestBeatTime = this.startAudioTime + nearestBeatNum * this.beatInterval;
+        const deltaMs = (tapTime - nearestBeatTime) * 1000;
+
+        if (!Number.isFinite(deltaMs) || Math.abs(deltaMs) > 220) return;
+
+        this.samples.push(deltaMs);
+        if (this.samples.length > 24) {
+            this.samples.shift();
+        }
+
+        const sum = this.samples.reduce((a, b) => a + b, 0);
+        this.tempOffsetMs = Math.round(sum / this.samples.length);
+
+        const sign = deltaMs > 0 ? '+' : '';
+        const label = Math.abs(deltaMs) < 8 ? 'JUST!' : (deltaMs < 0 ? 'EARLY' : 'LATE');
+        document.getElementById('calLastDeltaText').textContent = `直近タップ: ${sign}${Math.round(deltaMs)} ms (${label})`;
+
+        this.addMarker(deltaMs);
+        this.updateUI();
+    }
+
+    addMarker(deltaMs) {
+        const container = document.getElementById('calMarkersContainer');
+        if (!container) return;
+        const clamped = Math.max(-150, Math.min(150, deltaMs));
+        const pct = ((clamped + 150) / 300) * 100;
+
+        const marker = document.createElement('div');
+        marker.className = 'absolute top-2 bottom-2 w-1 -ml-0.5 rounded-full transition-opacity duration-500';
+        marker.style.left = `${pct}%`;
+        marker.style.backgroundColor = Math.abs(deltaMs) <= 15 ? '#34d399' : (deltaMs < 0 ? '#00f0ff' : '#fbbf24');
+        marker.style.opacity = '0.85';
+        container.appendChild(marker);
+
+        if (container.children.length > 16) {
+            container.removeChild(container.firstChild);
+        }
+    }
+
+    adjustManual(delta) {
+        this.tempOffsetMs = Math.max(-500, Math.min(500, this.tempOffsetMs + delta));
+        this.updateUI();
+    }
+
+    reset() {
+        this.samples = [];
+        this.tempOffsetMs = 0;
+        document.getElementById('calMarkersContainer').innerHTML = '';
+        document.getElementById('calLastDeltaText').textContent = 'リセットしました（タップして計測）';
+        this.updateUI();
+    }
+
+    apply() {
+        AppState.settings.offsetMs = this.tempOffsetMs;
+        const sign = this.tempOffsetMs > 0 ? '+' : '';
+        document.getElementById('offsetValText').textContent = `${sign}${this.tempOffsetMs} ms`;
+        showToast(`音ズレオフセットを ${sign}${this.tempOffsetMs} ms に設定しました`, 'success');
+        this.close();
+    }
+
+    updateUI() {
+        const sign = this.tempOffsetMs > 0 ? '+' : '';
+        document.getElementById('calCurrentOffsetDisplay').textContent = `${sign}${this.tempOffsetMs} ms`;
+        document.getElementById('calTapCountText').textContent = `計測回数: ${this.samples.length} 回`;
+
+        const clamped = Math.max(-150, Math.min(150, this.tempOffsetMs));
+        const pct = ((clamped + 150) / 300) * 100;
+        document.getElementById('calAvgMarker').style.left = `${pct}%`;
+    }
+}
+
+const calibrator = new OffsetCalibrator();
+
+class ChartParser {
+    static markSimultaneousNotes(judgeLines) {
+        if (!Array.isArray(judgeLines)) return;
+        const allNotes = [];
+        judgeLines.forEach(line => {
+            if (!line || !Array.isArray(line.notes)) return;
+            line.notes.forEach(n => {
+                n.isHighlight = false;
+                if (Number.isFinite(n.time)) {
+                    allNotes.push(n);
+                }
+            });
+        });
+
+        allNotes.sort((a, b) => a.time - b.time);
+
+        for (let i = 1; i < allNotes.length; i++) {
+            if (Math.abs(allNotes[i].time - allNotes[i - 1].time) <= 0.002) {
+                allNotes[i].isHighlight = true;
+                allNotes[i - 1].isHighlight = true;
+            }
+        }
+    }
+
+    static parseOfficialJSON(jsonObj) {
+        const formatVersion = safeNum(jsonObj.formatVersion, 3);
+        const offset = safeNum(jsonObj.offset, 0);
+        const judgeLines = [];
+        let totalNotes = 0;
+
+        (jsonObj.judgeLineList || []).forEach((line, lineIdx) => {
+            const bpm = Math.max(1, safeNum(line.bpm, 120));
+            const beatToSec = (t) => (safeNum(t, 0) / 32) * (60 / bpm);
+
+            const rawSpeedEvents = (Array.isArray(line.speedEvents) && line.speedEvents.length > 0)
+                ? line.speedEvents
+                : [{ startTime: 0, endTime: 999999, value: 1.0 }];
+
+            const speedEvents = rawSpeedEvents
+                .map(e => ({
+                    startTime: beatToSec(e.startTime),
+                    endTime: beatToSec(e.endTime),
+                    value: safeNum(e.value, 1.0),
+                    floorPosition: safeNum(e.floorPosition, 0)
+                }))
+                .sort((a, b) => a.startTime - b.startTime);
+
+            let currentPos = 0;
+            for (let i = 0; i < speedEvents.length; i++) {
+                speedEvents[i].floorPosition = currentPos;
+                const dur = Math.max(0, speedEvents[i].endTime - speedEvents[i].startTime);
+                currentPos += dur * speedEvents[i].value;
+            }
+
+            const rawMoveEvents = (Array.isArray(line.judgeLineMoveEvents) && line.judgeLineMoveEvents.length > 0)
+                ? line.judgeLineMoveEvents
+                : [{ startTime: 0, endTime: 999999, start: 0.5, end: 0.5, start2: 0.2, end2: 0.2 }];
+
+            const moveEvents = rawMoveEvents.map(e => {
+                if (formatVersion === 1) {
+                    const s = safeNum(e.start, 440104);
+                    const en = safeNum(e.end, 440104);
+                    const sx = Math.floor(s / 1000) / 880;
+                    const sy = (s % 1000) / 520;
+                    const ex = Math.floor(en / 1000) / 880;
+                    const ey = (en % 1000) / 520;
+                    return {
+                        startTime: beatToSec(e.startTime),
+                        endTime: beatToSec(e.endTime),
+                        startX: sx, endX: ex,
+                        startY: sy, endY: ey
+                    };
+                } else {
+                    return {
+                        startTime: beatToSec(e.startTime),
+                        endTime: beatToSec(e.endTime),
+                        startX: safeNum(e.start, 0.5),
+                        endX: safeNum(e.end, 0.5),
+                        startY: safeNum(e.start2, 0.2),
+                        endY: safeNum(e.end2, 0.2)
+                    };
+                }
+            });
+
+            const rawRotateEvents = (Array.isArray(line.judgeLineRotateEvents) && line.judgeLineRotateEvents.length > 0)
+                ? line.judgeLineRotateEvents
+                : [{ startTime: 0, endTime: 999999, start: 0, end: 0 }];
+
+            const rotateEvents = rawRotateEvents.map(e => ({
+                startTime: beatToSec(e.startTime),
+                endTime: beatToSec(e.endTime),
+                start: safeNum(e.start, 0),
+                end: safeNum(e.end, 0)
+            }));
+
+            const rawAlphaEvents = (Array.isArray(line.judgeLineDisappearEvents) && line.judgeLineDisappearEvents.length > 0)
+                ? line.judgeLineDisappearEvents
+                : [{ startTime: 0, endTime: 999999, start: 1, end: 1 }];
+
+            const alphaEvents = rawAlphaEvents.map(e => ({
+                startTime: beatToSec(e.startTime),
+                endTime: beatToSec(e.endTime),
+                start: safeNum(e.start, 1),
+                end: safeNum(e.end, 1)
+            }));
+
+            const notes = [];
+            const processNoteList = (rawList, isAbove) => {
+                if (!Array.isArray(rawList)) return;
+                rawList.forEach(n => {
+                    const noteType = safeNum(n.type, 1);
+                    const hitTime = beatToSec(n.time);
+                    const holdDur = noteType === 3 ? Math.max(0, beatToSec(n.holdTime)) : 0;
+                    const floorPos = this.calcFloorPosition(speedEvents, hitTime);
+                    const noteSpeed = Math.max(0, safeNum(n.speed, 1.0));
+                    const endFloorPos = noteType === 3 ? (floorPos + holdDur * noteSpeed) : floorPos;
+
+                    notes.push({
+                        id: `${lineIdx}_${notes.length}`,
+                        type: noteType,
+                        time: hitTime,
+                        holdTime: holdDur,
+                        endTime: hitTime + holdDur,
+                        positionX: safeNum(n.positionX, 0) * 0.05625,
+                        speed: noteSpeed,
+                        isHoldLengthSpeed: true,
+                        floorPosition: floorPos,
+                        endFloorPosition: endFloorPos,
+                        isAbove: Boolean(isAbove),
+                        isHighlight: false,
+                        judged: false,
+                        isHolding: false,
+                        holdTickTimer: 0,
+                        holdReleaseTimer: 0,
+                        hitResult: null
+                    });
+                    totalNotes++;
+                });
+            };
+
+            processNoteList(line.notesAbove, true);
+            processNoteList(line.notesBelow, false);
+            notes.sort((a, b) => a.time - b.time);
+
+            judgeLines.push({
+                id: lineIdx,
+                bpm,
+                speedEvents,
+                moveEvents,
+                rotateEvents,
+                alphaEvents,
+                notes
+            });
+        });
+
+        this.markSimultaneousNotes(judgeLines);
+        return { offset, judgeLines, totalNotes };
+    }
+
+    static parsePEC(pecText) {
+        const lines = pecText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) throw new Error("PECファイルが空です");
+
+        const offset = (safeNum(lines[0], 0) / 1000) - 0.175;
+        const bpmList = [];
+        const lineMap = new Map();
+
+        const getOrCreateLine = (id) => {
+            if (!lineMap.has(id)) {
+                lineMap.set(id, {
+                    id,
+                    speedEvents: [],
+                    moveEvents: [],
+                    rotateEvents: [],
+                    alphaEvents: [],
+                    notes: []
+                });
+            }
+            return lineMap.get(id);
+        };
+
+        for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(/\s+/);
+            const cmd = parts[0];
+            if (cmd === 'bp') {
+                bpmList.push({ beat: safeNum(parts[1], 0), bpm: Math.max(1, safeNum(parts[2], 120)) });
+            }
+        }
+        if (bpmList.length === 0) bpmList.push({ beat: 0, bpm: 120 });
+        bpmList.sort((a, b) => a.beat - b.beat);
+
+        const beatToSec = (targetBeat) => {
+            const tb = safeNum(targetBeat, 0);
+            let sec = 0;
+            for (let i = 0; i < bpmList.length; i++) {
+                const curr = bpmList[i];
+                const next = bpmList[i + 1];
+                if (!next || tb <= next.beat) {
+                    sec += ((tb - curr.beat) * 60) / curr.bpm;
+                    break;
+                } else {
+                    sec += ((next.beat - curr.beat) * 60) / curr.bpm;
+                }
+            }
+            return Math.max(0, sec);
+        };
+
+        let lastNote = null;
+        let totalNotes = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            const p = lines[i].split(/\s+/);
+            const cmd = p[0];
+
+            if (cmd === 'n1' || cmd === 'n2' || cmd === 'n3' || cmd === 'n4') {
+                const lineId = safeNum(p[1], 0);
+                const l = getOrCreateLine(lineId);
+                let type = 1, timeBeat = 0, endBeat = 0, posX = 0, above = 1;
+
+                if (cmd === 'n2') {
+                    type = 3;
+                    timeBeat = safeNum(p[2], 0);
+                    endBeat = safeNum(p[3], timeBeat);
+                    posX = safeNum(p[4], 0) / 1024;
+                    above = safeNum(p[5], 1);
+                } else {
+                    type = cmd === 'n1' ? 1 : (cmd === 'n3' ? 4 : 2);
+                    timeBeat = safeNum(p[2], 0);
+                    endBeat = timeBeat;
+                    posX = safeNum(p[3], 0) / 1024;
+                    above = safeNum(p[4], 1);
+                }
+
+                const hitTime = beatToSec(timeBeat);
+                const endTime = beatToSec(endBeat);
+                lastNote = {
+                    id: `${lineId}_${l.notes.length}`,
+                    type,
+                    time: hitTime,
+                    holdTime: Math.max(0, endTime - hitTime),
+                    endTime: Math.max(hitTime, endTime),
+                    positionX: posX,
+                    speed: 1.0,
+                    isHoldLengthSpeed: false,
+                    floorPosition: 0,
+                    endFloorPosition: 0,
+                    isAbove: above === 1,
+                    isHighlight: false,
+                    judged: false,
+                    isHolding: false,
+                    holdTickTimer: 0,
+                    holdReleaseTimer: 0,
+                    hitResult: null
+                };
+                l.notes.push(lastNote);
+                totalNotes++;
+            } else if (cmd === '#' && lastNote) {
+                lastNote.speed = Math.max(0, safeNum(p[1], 1.0));
+            } else if (cmd === 'cv') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                l.speedEvents.push({
+                    startTime: beatToSec(p[2]),
+                    endTime: 999999,
+                    value: safeNum(p[3], 1.0) / 7.0,
+                    floorPosition: 0
+                });
+            } else if (cmd === 'cp') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t = beatToSec(p[2]);
+                const x = safeNum(p[3], 1024) / 2048;
+                const y = safeNum(p[4], 700) / 1400;
+                l.moveEvents.push({ startTime: t, endTime: t, startX: x, endX: x, startY: y, endY: y });
+            } else if (cmd === 'cm') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t1 = beatToSec(p[2]);
+                const t2 = beatToSec(p[3]);
+                const ex = safeNum(p[4], 1024) / 2048;
+                const ey = safeNum(p[5], 700) / 1400;
+                const prev = l.moveEvents[l.moveEvents.length - 1];
+                l.moveEvents.push({
+                    startTime: t1, endTime: t2,
+                    startX: prev ? prev.endX : ex, endX: ex,
+                    startY: prev ? prev.endY : ey, endY: ey
+                });
+            } else if (cmd === 'cd') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t = beatToSec(p[2]);
+                const deg = -safeNum(p[3], 0);
+                l.rotateEvents.push({ startTime: t, endTime: t, start: deg, end: deg });
+            } else if (cmd === 'cr') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t1 = beatToSec(p[2]);
+                const t2 = beatToSec(p[3]);
+                const edeg = -safeNum(p[4], 0);
+                const prev = l.rotateEvents[l.rotateEvents.length - 1];
+                l.rotateEvents.push({
+                    startTime: t1, endTime: t2,
+                    start: prev ? prev.end : edeg, end: edeg
+                });
+            } else if (cmd === 'ca') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t = beatToSec(p[2]);
+                const a = safeNum(p[3], 255) / 255;
+                l.alphaEvents.push({ startTime: t, endTime: t, start: a, end: a });
+            } else if (cmd === 'cf') {
+                const l = getOrCreateLine(safeNum(p[1], 0));
+                const t1 = beatToSec(p[2]);
+                const t2 = beatToSec(p[3]);
+                const ea = safeNum(p[4], 255) / 255;
+                const prev = l.alphaEvents[l.alphaEvents.length - 1];
+                l.alphaEvents.push({
+                    startTime: t1, endTime: t2,
+                    start: prev ? prev.end : ea, end: ea
+                });
+            }
+        }
+
+        const judgeLines = Array.from(lineMap.values());
+        judgeLines.forEach(l => {
+            if (l.speedEvents.length === 0) l.speedEvents.push({ startTime: 0, endTime: 999999, value: 1.0, floorPosition: 0 });
+            l.speedEvents.sort((a, b) => a.startTime - b.startTime);
+            let pos = 0;
+            for (let i = 0; i < l.speedEvents.length; i++) {
+                if (i < l.speedEvents.length - 1) l.speedEvents[i].endTime = l.speedEvents[i + 1].startTime;
+                l.speedEvents[i].floorPosition = pos;
+                pos += Math.max(0, l.speedEvents[i].endTime - l.speedEvents[i].startTime) * l.speedEvents[i].value;
+            }
+            if (l.moveEvents.length === 0) l.moveEvents.push({ startTime: 0, endTime: 999999, startX: 0.5, endX: 0.5, startY: 0.2, endY: 0.2 });
+            if (l.rotateEvents.length === 0) l.rotateEvents.push({ startTime: 0, endTime: 999999, start: 0, end: 0 });
+            if (l.alphaEvents.length === 0) l.alphaEvents.push({ startTime: 0, endTime: 999999, start: 1, end: 1 });
+
+            l.notes.sort((a, b) => a.time - b.time);
+            l.notes.forEach(n => {
+                n.floorPosition = this.calcFloorPosition(l.speedEvents, n.time);
+                n.endFloorPosition = n.type === 3 ? this.calcFloorPosition(l.speedEvents, n.endTime) : n.floorPosition;
+            });
+        });
+
+        this.markSimultaneousNotes(judgeLines);
+        return { offset, judgeLines, totalNotes };
+    }
+
+    static calcFloorPosition(speedEvents, time) {
+        if (!Array.isArray(speedEvents) || speedEvents.length === 0) return Math.max(0, time);
+        if (time <= speedEvents[0].startTime) {
+            return (time - speedEvents[0].startTime) * speedEvents[0].value;
+        }
+        for (let i = 0; i < speedEvents.length; i++) {
+            const ev = speedEvents[i];
+            if (time >= ev.startTime && (time <= ev.endTime || i === speedEvents.length - 1)) {
+                return ev.floorPosition + (time - ev.startTime) * ev.value;
+            }
+        }
+        return 0;
+    }
+}
+
+async function handleDroppedOrSelectedFiles(fileList) {
+    if (!fileList || fileList.length === 0) return;
+    const extractedFiles = [];
+
+    for (const file of Array.from(fileList)) {
+        const lowerName = file.name.toLowerCase();
+        if (lowerName.endsWith('.zip')) {
+            if (typeof JSZip === 'undefined') {
+                showToast('ZIP解凍ライブラリの読み込みに失敗しました。', 'error');
+                continue;
+            }
+            showToast(`ZIPファイルを解凍中: ${file.name}`, 'info');
+            try {
+                const zip = await JSZip.loadAsync(file);
+                for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
+                    if (zipEntry.dir) continue;
+                    const baseName = relativePath.split('/').pop();
+                    if (!baseName || baseName.startsWith('.')) continue;
+                    const blob = await zipEntry.async('blob');
+                    extractedFiles.push(new File([blob], baseName, { type: blob.type }));
+                }
+            } catch (err) {
+                showToast(`ZIPの解凍に失敗しました: ${err.message}`, 'error');
+            }
+        } else {
+            extractedFiles.push(file);
+        }
+    }
+
+    for (const file of extractedFiles) {
+        const name = file.name;
+        const lower = name.toLowerCase();
+
+        if (lower === 'info.txt' || lower === 'info.csv') {
+            try {
+                const txt = await file.text();
+                parseMetadataInfo(txt);
+            } catch (e) {}
+            continue;
+        }
+
+        if (lower.endsWith('.json') || lower.endsWith('.pec')) {
+            try {
+                const text = await file.text();
+                let parsed;
+                if (lower.endsWith('.json')) {
+                    const obj = JSON.parse(text);
+                    if (!obj.judgeLineList) throw new Error("Phigros形式のJSONではありません");
+                    parsed = ChartParser.parseOfficialJSON(obj);
+                } else {
+                    parsed = ChartParser.parsePEC(text);
+                }
+
+                AppState.chart = parsed;
+                AppState.chartFileName = name;
+                AppState.totalNotes = parsed.totalNotes;
+
+                if (!AppState.title) {
+                    AppState.title = name.replace(/\.(json|pec)$/i, '');
+                    document.getElementById('songTitleInput').value = AppState.title;
+                }
+
+                document.getElementById('chartFileName').textContent = name;
+                document.getElementById('chartFileName').className = 'text-xs text-cyan-300 truncate font-medium';
+                document.getElementById('noteCountText').textContent = `総ノーツ数: ${parsed.totalNotes}`;
+                document.getElementById('chartStatusDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+                document.getElementById('chartSlotCard').className = 'p-2.5 rounded-xl bg-slate-900/90 border border-cyan-500/50 flex flex-col justify-between transition-colors';
+
+                showToast(`譜面を読み込みました (${parsed.totalNotes}ノーツ)`, 'success');
+            } catch (err) {
+                showToast(`譜面の読み込みエラー: ${err.message}`, 'error');
+            }
+        }
+        else if (lower.match(/\.(mp3|ogg|wav|m4a|aac|flac)$/)) {
+            try {
+                showToast(`音源をデコード中: ${name}`, 'info');
+                const arrBuf = await file.arrayBuffer();
+                const audioBuf = await soundEngine.decodeAudio(arrBuf);
+                AppState.audioBuffer = audioBuf;
+                AppState.audioFileName = name;
+                AppState.audioDuration = audioBuf.duration;
+
+                const mins = Math.floor(audioBuf.duration / 60);
+                const secs = Math.floor(audioBuf.duration % 60).toString().padStart(2, '0');
+                document.getElementById('audioFileName').textContent = name;
+                document.getElementById('audioFileName').className = 'text-xs text-amber-300 truncate font-medium';
+                document.getElementById('audioDurationText').textContent = `再生時間: ${mins}:${secs}`;
+                document.getElementById('audioStatusDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+                document.getElementById('audioSlotCard').className = 'p-2.5 rounded-xl bg-slate-900/90 border border-amber-500/50 flex flex-col justify-between transition-colors';
+
+                if (!AppState.title) {
+                    AppState.title = name.replace(/\.(mp3|ogg|wav|m4a|aac|flac)$/i, '');
+                    document.getElementById('songTitleInput').value = AppState.title;
+                }
+
+                showToast(`音源を読み込みました: ${name}`, 'success');
+            } catch (err) {
+                showToast(`音源デコード失敗: ${err.message}`, 'error');
+            }
+        }
+        else if (lower.match(/\.(png|jpg|jpeg|webp)$/)) {
+            try {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    AppState.bgImage = img;
+                    AppState.bgFileName = name;
+                    document.getElementById('bgFileName').textContent = name;
+                    document.getElementById('bgFileName').className = 'text-xs text-pink-300 truncate font-medium';
+                    document.getElementById('bgStatusDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+                    document.getElementById('bgSlotCard').className = 'p-2.5 rounded-xl bg-slate-900/90 border border-pink-500/50 flex flex-col justify-between transition-colors';
+                    showToast(`背景イラストを設定しました: ${name}`, 'success');
+                };
+                img.src = url;
+            } catch (err) {
+                showToast(`画像の読み込みに失敗しました`, 'error');
+            }
+        }
+    }
+
+    updatePlayReadyState();
+}
+
+function parseMetadataInfo(text) {
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+        const nameMatch = line.match(/^(?:Name|Title)\s*[:：]\s*(.+)$/i);
+        if (nameMatch) {
+            AppState.title = nameMatch[1].trim();
+            document.getElementById('songTitleInput').value = AppState.title;
+        }
+        const levelMatch = line.match(/^(?:Level|Difficulty)\s*[:：]\s*(.+)$/i);
+        if (levelMatch) {
+            AppState.difficulty = levelMatch[1].trim();
+            document.getElementById('difficultyInput').value = AppState.difficulty;
+        }
+    }
+}
+
+function clearAllAssets() {
+    AppState.chart = null;
+    AppState.chartFileName = "";
+    AppState.totalNotes = 0;
+    AppState.audioBuffer = null;
+    AppState.audioFileName = "";
+    AppState.audioDuration = 0;
+    AppState.bgImage = null;
+    AppState.bgFileName = "";
+    AppState.title = "";
+
+    document.getElementById('songTitleInput').value = "";
+    document.getElementById('chartFileName').textContent = "未読み込み (.json / .pec)";
+    document.getElementById('chartFileName').className = "text-xs text-slate-400 truncate font-medium";
+    document.getElementById('noteCountText').textContent = "総ノーツ数: -";
+    document.getElementById('chartStatusDot').className = "w-2.5 h-2.5 rounded-full bg-rose-500";
+    document.getElementById('chartSlotCard').className = "p-2.5 rounded-xl bg-slate-900/90 border border-rose-500/30 flex flex-col justify-between transition-colors";
+
+    document.getElementById('audioFileName').textContent = "未読み込み (.mp3 / .ogg / .wav)";
+    document.getElementById('audioFileName').className = "text-xs text-slate-400 truncate font-medium";
+    document.getElementById('audioDurationText').textContent = "再生時間: --:--";
+    document.getElementById('audioStatusDot').className = "w-2.5 h-2.5 rounded-full bg-rose-500";
+    document.getElementById('audioSlotCard').className = "p-2.5 rounded-xl bg-slate-900/90 border border-rose-500/30 flex flex-col justify-between transition-colors";
+
+    document.getElementById('bgFileName').textContent = "デフォルト幾何学背景";
+    document.getElementById('bgFileName').className = "text-xs text-slate-400 truncate font-medium";
+    document.getElementById('bgStatusDot').className = "w-2.5 h-2.5 rounded-full bg-slate-600";
+    document.getElementById('bgSlotCard').className = "p-2.5 rounded-xl bg-slate-900/90 border border-white/10 flex flex-col justify-between transition-colors";
+
+    updatePlayReadyState();
+    showToast("読み込み済みのファイルをクリアしました", "info");
+}
+
+function updatePlayReadyState() {
+    const hasChart = Boolean(AppState.chart && AppState.totalNotes > 0);
+    const hasAudio = Boolean(AppState.audioBuffer);
+    const isReady = hasChart && hasAudio;
+
+    const btn = document.getElementById('startGameBtn');
+    const btnText = document.getElementById('startBtnText');
+    const badge = document.getElementById('readyStatusBadge');
+
+    if (isReady) {
+        btn.disabled = false;
+        btn.className = "phi-cut w-full py-4 px-6 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 font-black text-lg sm:text-xl tracking-widest shadow-[0_0_25px_rgba(0,240,255,0.45)] transition transform active:scale-[0.98] flex items-center justify-center gap-3 cursor-pointer";
+        btnText.textContent = "プレイ開始";
+        badge.textContent = "プレイ準備完了";
+        badge.className = "text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-bold";
+    } else {
+        btn.disabled = true;
+        btn.className = "phi-cut w-full py-4 px-6 bg-slate-800 text-slate-500 cursor-not-allowed font-black text-lg sm:text-xl tracking-widest transition transform flex items-center justify-center gap-3";
+        if (!hasChart && !hasAudio) {
+            btnText.textContent = "譜面と音源を読み込んでください";
+            badge.textContent = "譜面と音源が未読み込み";
+        } else if (!hasChart) {
+            btnText.textContent = "譜面 (.json/.pec) を読み込んでください";
+            badge.textContent = "譜面データが未読み込み";
+        } else {
+            btnText.textContent = "楽曲音源 (.mp3/.ogg/.wav) を読み込んでください";
+            badge.textContent = "楽曲音源が未読み込み";
+        }
+        badge.className = "text-xs px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-400/40 font-bold";
+    }
+}
+
+function toggleFullscreen() {
+    const docEl = document.documentElement;
+    const isNativeFS = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+
+    if (!isNativeFS && !AppState.pseudoFullscreen) {
+        if (docEl.requestFullscreen) {
+            docEl.requestFullscreen().catch(() => { enablePseudoFullscreen(); });
+        } else if (docEl.webkitRequestFullscreen) {
+            docEl.webkitRequestFullscreen();
+        } else {
+            enablePseudoFullscreen();
+        }
+    } else {
+        if (isNativeFS) {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            }
+        }
+        disablePseudoFullscreen();
+    }
+    updateFullscreenLabels();
+}
+
+function enablePseudoFullscreen() {
+    AppState.pseudoFullscreen = true;
+    document.body.classList.add('pseudo-fullscreen');
+    window.scrollTo(0, 1);
+    resizeCanvas();
+    updateFullscreenLabels();
+}
+
+function disablePseudoFullscreen() {
+    AppState.pseudoFullscreen = false;
+    document.body.classList.remove('pseudo-fullscreen');
+    resizeCanvas();
+    updateFullscreenLabels();
+}
+
+function updateFullscreenLabels() {
+    const isFS = Boolean(document.fullscreenElement || document.webkitFullscreenElement || AppState.pseudoFullscreen);
+    document.querySelectorAll('.fsBtnLabel').forEach(el => {
+        el.textContent = isFS ? '全画面解除' : '全画面';
+    });
+}
+
+document.addEventListener('fullscreenchange', () => { resizeCanvas(); updateFullscreenLabels(); });
+document.addEventListener('webkitfullscreenchange', () => { resizeCanvas(); updateFullscreenLabels(); });
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let lastFrameTime = 0;
+
+function resizeCanvas() {
+    const wrapper = document.getElementById('appWrapper');
+    if (!wrapper) return;
+    const availW = wrapper.clientWidth || window.innerWidth;
+    const availH = wrapper.clientHeight || window.innerHeight;
+    const targetAspect = 16 / 9;
+
+    let drawW = availW;
+    let drawH = availW / targetAspect;
+
+    if (drawH > availH) {
+        drawH = availH;
+        drawW = availH * targetAspect;
+    }
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.style.width = `${Math.floor(drawW)}px`;
+    canvas.style.height = `${Math.floor(drawH)}px`;
+    canvas.width = Math.max(1, Math.floor(drawW * dpr));
+    canvas.height = Math.max(1, Math.floor(drawH * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+window.addEventListener('resize', resizeCanvas);
+
+function evalEventList(events, time, propStart, propEnd, defaultVal) {
+    if (!Array.isArray(events) || events.length === 0) return defaultVal;
+    if (time <= events[0].startTime) return safeNum(events[0][propStart], defaultVal);
+
+    for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        if (time >= ev.startTime && time <= ev.endTime) {
+            const dur = ev.endTime - ev.startTime;
+            if (dur <= 0.00001) return safeNum(ev[propEnd], defaultVal);
+            const t = Math.max(0, Math.min(1, (time - ev.startTime) / dur));
+            const s = safeNum(ev[propStart], defaultVal);
+            const e = safeNum(ev[propEnd], defaultVal);
+            return s + (e - s) * t;
+        }
+        if (i < events.length - 1 && time > ev.endTime && time < events[i + 1].startTime) {
+            return safeNum(ev[propEnd], defaultVal);
+        }
+    }
+    return safeNum(events[events.length - 1][propEnd], defaultVal);
+}
+
+const JUDGE_WINDOW = {
+    PERFECT: 0.080,
+    GOOD: 0.160,
+    BAD: 0.200
+};
+
+function registerJudgement(result, note, worldX, worldY) {
+    if (result === 'PERFECT') {
+        AppState.stats.perfect++;
+        AppState.stats.combo++;
+        soundEngine.playHitSound(note.type);
+        spawnHitEffect(worldX, worldY, '#ffd700');
+        spawnJudgePopup(worldX, worldY, 'PERFECT', '#ffd700');
+    } else if (result === 'GOOD') {
+        AppState.stats.good++;
+        AppState.stats.combo++;
+        soundEngine.playHitSound(note.type);
+        spawnHitEffect(worldX, worldY, '#00f0ff');
+        spawnJudgePopup(worldX, worldY, 'GOOD', '#00f0ff');
+    } else if (result === 'BAD') {
+        AppState.stats.bad++;
+        AppState.stats.combo = 0;
+        spawnJudgePopup(worldX, worldY, 'BAD', '#c084fc');
+    } else {
+        AppState.stats.miss++;
+        AppState.stats.combo = 0;
+        spawnJudgePopup(worldX, worldY, 'MISS', '#fb7185');
+    }
+
+    if (AppState.stats.combo > AppState.stats.maxCombo) {
+        AppState.stats.maxCombo = AppState.stats.combo;
+    }
+
+    const total = Math.max(1, AppState.totalNotes);
+    const judgePoints = (AppState.stats.perfect * 1.0 + AppState.stats.good * 0.65) / total;
+    const comboPoints = AppState.stats.maxCombo / total;
+    AppState.stats.score = Math.round(judgePoints * 900000 + comboPoints * 100000);
+}
+
+function spawnHitEffect(x, y, color) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const particles = [];
+    for (let i = 0; i < 8; i++) {
+        const angle = (Math.PI * 2 * i) / 8 + (Math.random() - 0.5) * 0.4;
+        const spd = 90 + Math.random() * 140;
+        particles.push({
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
+            size: 3 + Math.random() * 3
+        });
+    }
+    AppState.effects.push({ x, y, color, age: 0, maxAge: 0.35, particles });
+}
+
+function spawnJudgePopup(x, y, text, color) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    AppState.judgePopups.push({ x, y: y - 24, text, color, age: 0, maxAge: 0.45 });
+}
+
+function gameLoop(timestamp) {
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    const dt = Math.min(0.05, Math.max(0, (timestamp - lastFrameTime) / 1000));
+    lastFrameTime = timestamp;
+
+    try {
+        renderAndUpdate(dt);
+    } catch (err) {
+        console.error("GameLoop Error:", err);
+    }
+    requestAnimationFrame(gameLoop);
+}
+
+function renderAndUpdate(dt) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = Math.max(1, canvas.width / dpr);
+    const H = Math.max(1, canvas.height / dpr);
+
+    ctx.fillStyle = '#070b14';
+    ctx.fillRect(0, 0, W, H);
+
+    if (AppState.bgImage) {
+        ctx.save();
+        ctx.globalAlpha = safeNum(AppState.settings.bgBrightness, 0.4);
+        const imgRatio = AppState.bgImage.width / Math.max(1, AppState.bgImage.height);
+        const canRatio = W / H;
+        let dw = W, dh = H, dx = 0, dy = 0;
+        if (imgRatio > canRatio) {
+            dw = H * imgRatio;
+            dx = (W - dw) / 2;
+        } else {
+            dh = W / imgRatio;
+            dy = (H - dh) / 2;
+        }
+        ctx.drawImage(AppState.bgImage, dx, dy, dw, dh);
+        ctx.restore();
+    } else {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.06)';
+        ctx.lineWidth = 1;
+        const step = Math.max(20, W / 20);
+        for (let x = 0; x < W; x += step) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+        }
+        for (let y = 0; y < H; y += step) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    if (!AppState.isPlaying || !AppState.chart) return;
+
+    const rawMusicTime = soundEngine.getCurrentTime();
+    const chartTime = rawMusicTime - safeNum(AppState.chart.offset, 0) - (safeNum(AppState.settings.offsetMs, 0) / 1000);
+
+    const maxEndTime = Math.max(1, safeNum(AppState.audioDuration, 10)) + 1.2;
+    if (rawMusicTime >= maxEndTime && !AppState.isPaused) {
+        finishGame();
+        return;
+    }
+
+    const noteScale = safeNum(AppState.settings.noteScale, 1.0);
+    const noteWidthBase = W * 0.115 * noteScale;
+    const noteHeightBase = Math.max(8, H * 0.017 * noteScale);
+    const speedUnitScale = H * 0.62;
+    const isHighlightEnabled = Boolean(AppState.settings.multiHighlight);
+
+    AppState.chart.judgeLines.forEach(line => {
+        const normX = evalEventList(line.moveEvents, chartTime, 'startX', 'endX', 0.5);
+        const normY = evalEventList(line.moveEvents, chartTime, 'startY', 'endY', 0.2);
+        const angleDeg = evalEventList(line.rotateEvents, chartTime, 'start', 'end', 0);
+        const alpha = Math.max(0, Math.min(1, evalEventList(line.alphaEvents, chartTime, 'start', 'end', 1)));
+
+        const lineX = normX * W;
+        const lineY = (1.0 - normY) * H;
+        const angleRad = (-angleDeg * Math.PI) / 180;
+        const cosA = Math.cos(angleRad);
+        const sinA = Math.sin(angleRad);
+
+        const currentFloor = ChartParser.calcFloorPosition(line.speedEvents, chartTime);
+
+        ctx.save();
+        ctx.translate(lineX, lineY);
+        ctx.rotate(angleRad);
+
+        if (alpha > 0.01) {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            const isFC = (AppState.stats.bad === 0 && AppState.stats.miss === 0);
+            const isAP = (isFC && AppState.stats.good === 0);
+            ctx.strokeStyle = isAP ? '#ffd700' : (isFC ? '#00f0ff' : '#ffffff');
+            ctx.lineWidth = Math.max(2.5, H * 0.005);
+            ctx.shadowColor = ctx.strokeStyle;
+            ctx.shadowBlur = 10;
+
+            const lineLen = W * 2.4;
+            ctx.beginPath();
+            ctx.moveTo(-lineLen, 0);
+            ctx.lineTo(lineLen, 0);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        const dirSign = -1;
+        for (let i = 0; i < line.notes.length; i++) {
+            const note = line.notes[i];
+            if (note.judged) continue;
+
+            const timeDiff = note.time - chartTime;
+            const localX = note.positionX * W;
+            const worldNoteX = lineX + localX * cosA;
+            const worldNoteY = lineY + localX * sinA;
+
+            if (!AppState.isPaused) {
+                if (AppState.settings.autoPlay) {
+                    if (note.type !== 3) {
+                        if (timeDiff <= 0) {
+                            note.judged = true;
+                            registerJudgement('PERFECT', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                    } else {
+                        if (timeDiff <= 0 && !note.isHolding) {
+                            note.isHolding = true;
+                            soundEngine.playHitSound(3);
+                            spawnHitEffect(worldNoteX, worldNoteY, '#ffd700');
+                        }
+                        if (note.isHolding) {
+                            note.holdTickTimer += dt;
+                            if (note.holdTickTimer >= 0.12) {
+                                note.holdTickTimer = 0;
+                                spawnHitEffect(worldNoteX, worldNoteY, '#ffd700');
+                            }
+                            if (chartTime >= note.endTime) {
+                                note.judged = true;
+                                registerJudgement('PERFECT', note, worldNoteX, worldNoteY);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    const absDiff = Math.abs(timeDiff);
+                    const lineTouchVerticalTolerance = H * 1.5;
+                    const hitHorizontalWidth = W * 0.09 * noteScale;
+
+                    let matchedPointer = null;
+                    let matchedHoldStartPointer = null;
+
+                    for (const [, ptr] of AppState.pointers) {
+                        if (ptr.isKeyboard) {
+                            matchedPointer = ptr;
+                            matchedHoldStartPointer = ptr;
+                            break;
+                        }
+                        const relX = ptr.x - lineX;
+                        const relY = ptr.y - lineY;
+                        const projX = relX * cosA + relY * sinA;
+                        const projY = -relX * sinA + relY * cosA;
+
+                        if (Math.abs(projX - localX) <= hitHorizontalWidth && Math.abs(projY) <= lineTouchVerticalTolerance) {
+                            matchedPointer = ptr;
+                            matchedHoldStartPointer = ptr;
+                        }
+                    }
+
+                    if (note.type === 1) {
+                        if (matchedPointer && matchedPointer.justPressed && absDiff <= JUDGE_WINDOW.BAD) {
+                            matchedPointer.justPressed = false;
+                            note.judged = true;
+                            const res = absDiff <= JUDGE_WINDOW.PERFECT ? 'PERFECT' : (absDiff <= JUDGE_WINDOW.GOOD ? 'GOOD' : 'BAD');
+                            registerJudgement(res, note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                        if (timeDiff < -JUDGE_WINDOW.BAD) {
+                            note.judged = true;
+                            registerJudgement('MISS', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                    } else if (note.type === 2) {
+                        if (matchedPointer && absDiff <= JUDGE_WINDOW.GOOD) {
+                            note.judged = true;
+                            registerJudgement('PERFECT', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                        if (timeDiff < -JUDGE_WINDOW.GOOD) {
+                            note.judged = true;
+                            registerJudgement('MISS', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                    } else if (note.type === 4) {
+                        if (matchedPointer && (matchedPointer.speed > 4 || matchedPointer.justPressed) && absDiff <= JUDGE_WINDOW.GOOD) {
+                            note.judged = true;
+                            registerJudgement('PERFECT', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                        if (timeDiff < -JUDGE_WINDOW.GOOD) {
+                            note.judged = true;
+                            registerJudgement('MISS', note, worldNoteX, worldNoteY);
+                            continue;
+                        }
+                    } else if (note.type === 3) {
+                        if (!note.isHolding) {
+                            if (matchedHoldStartPointer && matchedHoldStartPointer.justPressed && absDiff <= JUDGE_WINDOW.GOOD) {
+                                matchedHoldStartPointer.justPressed = false;
+                                note.isHolding = true;
+                                note.holdReleaseTimer = 0;
+                                note.holdTickTimer = 0;
+                                note.hitResult = absDiff <= JUDGE_WINDOW.PERFECT ? 'PERFECT' : 'GOOD';
+                                soundEngine.playHitSound(3);
+                                spawnHitEffect(worldNoteX, worldNoteY, '#ffd700');
+                            } else if (timeDiff < -JUDGE_WINDOW.GOOD) {
+                                note.judged = true;
+                                registerJudgement('MISS', note, worldNoteX, worldNoteY);
+                                continue;
+                            }
+                        } else {
+                            const remainingToEnd = note.endTime - chartTime;
+                            if (remainingToEnd <= 0.20) {
+                                note.judged = true;
+                                registerJudgement(note.hitResult || 'PERFECT', note, worldNoteX, worldNoteY);
+                                continue;
+                            }
+
+                            const hasAnyActiveTouch = AppState.pointers.size > 0;
+                            if (hasAnyActiveTouch) {
+                                note.holdReleaseTimer = 0;
+                                note.holdTickTimer += dt;
+                                if (note.holdTickTimer >= 0.12) {
+                                    note.holdTickTimer = 0;
+                                    spawnHitEffect(worldNoteX, worldNoteY, '#ffd700');
+                                }
+                            } else {
+                                note.holdReleaseTimer += dt;
+                                if (note.holdReleaseTimer > 0.18) {
+                                    note.judged = true;
+                                    registerJudgement('MISS', note, worldNoteX, worldNoteY);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            const approachSpeed = note.isHoldLengthSpeed ? 1.0 : note.speed;
+            const headDist = (note.floorPosition - currentFloor) * speedUnitScale * approachSpeed;
+            const sideFactor = note.isAbove ? dirSign : -dirSign;
+
+            if (note.type !== 3 && headDist > H * 1.8) continue;
+            if (note.type !== 3 && headDist < -H * 0.4) continue;
+
+            const isHL = isHighlightEnabled && note.isHighlight;
+
+            if (note.type === 3) {
+                const tailDist = (note.endFloorPosition - currentFloor) * speedUnitScale * approachSpeed;
+                
+                if ((headDist < -H * 0.5 && tailDist < -H * 0.5) || (headDist > H * 1.8 && tailDist > H * 1.8)) {
+                    continue;
+                }
+
+                const clampedHeadDist = note.isHolding ? 0 : headDist;
+                const clampedTailDist = Math.max(0, tailDist);
+                const yHead = clampedHeadDist * sideFactor;
+                const yTail = clampedTailDist * sideFactor;
+                
+                const bodyTop = Math.min(yHead, yTail);
+                const bodyBottom = Math.max(yHead, yTail);
+                const bodyHeight = bodyBottom - bodyTop;
+
+                if (bodyHeight <= 0.5) continue;
+
+                ctx.save();
+                const isActivelyHeld = note.isHolding && note.holdReleaseTimer <= 0.02;
+                ctx.globalAlpha = isActivelyHeld ? 0.96 : 0.85;
+                const halfW = noteWidthBase * 0.46;
+
+                if (isHL && Number.isFinite(localX) && Number.isFinite(halfW) && halfW > 0) {
+                    const bodyGrad = ctx.createLinearGradient(localX - halfW, 0, localX + halfW, 0);
+                    bodyGrad.addColorStop(0, 'rgba(255, 215, 0, 0.92)');
+                    bodyGrad.addColorStop(0.25, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
+                    bodyGrad.addColorStop(0.75, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
+                    bodyGrad.addColorStop(1, 'rgba(255, 215, 0, 0.92)');
+                    ctx.fillStyle = bodyGrad;
+                    if (isActivelyHeld) {
+                        ctx.shadowColor = '#ffd700';
+                        ctx.shadowBlur = 14;
+                    }
+                    ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                    ctx.shadowBlur = 0;
+
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                } else {
+                    ctx.fillStyle = isActivelyHeld ? '#67f3ff' : '#00d8ff';
+                    if (isActivelyHeld) {
+                        ctx.shadowColor = '#00f0ff';
+                        ctx.shadowBlur = 14;
+                    }
+                    ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                    ctx.shadowBlur = 0;
+                }
+
+                if (!note.isHolding) {
+                    ctx.globalAlpha = 1.0;
+                    if (isHL || isActivelyHeld) {
+                        ctx.shadowColor = isHL ? '#ffd700' : '#00f0ff';
+                        ctx.shadowBlur = 16;
+                        ctx.fillStyle = isHL ? '#ffd700' : '#a5f3fc';
+                        ctx.fillRect(localX - noteWidthBase * 0.54, yHead - noteHeightBase * 0.65, noteWidthBase * 1.08, noteHeightBase * 1.3);
+                        ctx.shadowBlur = 0;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(localX - noteWidthBase * 0.48, yHead - noteHeightBase * 0.42, noteWidthBase * 0.96, noteHeightBase * 0.84);
+                    } else {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(localX - noteWidthBase * 0.5, yHead - noteHeightBase * 0.5, noteWidthBase, noteHeightBase);
+                    }
+                }
+                ctx.restore();
+            } else {
+                const yPos = headDist * sideFactor;
+                const nw = note.type === 2 ? noteWidthBase * 0.85 : noteWidthBase;
+                const nh = noteHeightBase;
+
+                ctx.save();
+                ctx.translate(localX, yPos);
+
+                if (isHL) {
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 18;
+                    ctx.fillStyle = '#ffd700';
+                    ctx.fillRect(-nw * 0.56, -nh * 0.72, nw * 1.12, nh * 1.44);
+                    ctx.shadowBlur = 0;
+                }
+
+                if (note.type === 1) {
+                    ctx.fillStyle = '#00f0ff';
+                    ctx.fillRect(-nw * 0.5, -nh * 0.5, nw, nh);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(-nw * 0.46, -nh * 0.25, nw * 0.92, nh * 0.5);
+                } else if (note.type === 2) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.fillRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                    if (isHL) {
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                    }
+                } else if (note.type === 4) {
+                    ctx.fillStyle = '#ff2a6d';
+                    ctx.fillRect(-nw * 0.5, -nh * 0.55, nw, nh * 1.1);
+                    ctx.fillStyle = isHL ? '#ffd700' : '#ffffff';
+                    ctx.fillRect(-nw * 0.42, -nh * 0.2, nw * 0.84, nh * 0.4);
+                }
+                ctx.restore();
+            }
+        }
+
+        ctx.restore();
+    });
+
+    for (const [, ptr] of AppState.pointers) {
+        ptr.justPressed = false;
+        ptr.speed *= 0.6;
+    }
+
+    for (let i = AppState.effects.length - 1; i >= 0; i--) {
+        const ef = AppState.effects[i];
+        ef.age += dt;
+        if (ef.age >= ef.maxAge) {
+            AppState.effects.splice(i, 1);
+            continue;
+        }
+        const prog = ef.age / ef.maxAge;
+        const alpha = 1 - prog;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = ef.color;
+        ctx.lineWidth = 3;
+        const boxSize = (W * 0.045) * (0.6 + prog * 0.9);
+        ctx.translate(ef.x, ef.y);
+        ctx.rotate(prog * 0.6);
+        ctx.strokeRect(-boxSize / 2, -boxSize / 2, boxSize, boxSize);
+
+        ctx.fillStyle = ef.color;
+        ef.particles.forEach(p => {
+            const px = p.vx * ef.age;
+            const py = p.vy * ef.age;
+            ctx.fillRect(px - p.size / 2, py - p.size / 2, p.size * (1 - prog * 0.5), p.size * (1 - prog * 0.5));
+        });
+        ctx.restore();
+    }
+
+    for (let i = AppState.judgePopups.length - 1; i >= 0; i--) {
+        const pop = AppState.judgePopups[i];
+        pop.age += dt;
+        if (pop.age >= pop.maxAge) {
+            AppState.judgePopups.splice(i, 1);
+            continue;
+        }
+        const prog = pop.age / pop.maxAge;
+        ctx.save();
+        ctx.globalAlpha = 1 - Math.pow(prog, 2);
+        ctx.font = `900 ${Math.round(H * 0.026)}px 'Rajdhani', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = pop.color;
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 6;
+        ctx.fillText(pop.text, pop.x, pop.y - prog * 18);
+        ctx.restore();
+    }
+
+    drawPlayHUD(W, H, rawMusicTime);
+}
+
+function drawPlayHUD(W, H, rawMusicTime) {
+    const duration = Math.max(1, safeNum(AppState.audioDuration, 10));
+    const progress = Math.max(0, Math.min(1, rawMusicTime / duration));
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(0, 0, W, 4);
+    ctx.fillStyle = '#00f0ff';
+    ctx.fillRect(0, 0, W * progress, 4);
+
+    const scoreStr = AppState.stats.score.toString().padStart(7, '0');
+    ctx.save();
+    ctx.font = `700 ${Math.round(H * 0.048)}px 'Rajdhani', sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(scoreStr, W - W * 0.025, H * 0.068);
+    ctx.restore();
+
+    if (AppState.stats.combo >= 3) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(0, 240, 255, 0.5)';
+        ctx.shadowBlur = 12;
+        ctx.font = `900 ${Math.round(H * 0.068)}px 'Rajdhani', sans-serif`;
+        ctx.fillText(AppState.stats.combo.toString(), W / 2, H * 0.082);
+
+        ctx.font = `700 ${Math.round(H * 0.018)}px 'Rajdhani', sans-serif`;
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText('COMBO', W / 2, H * 0.106);
+        ctx.restore();
+    }
+
+    ctx.save();
+    ctx.font = `700 ${Math.round(H * 0.024)}px 'Noto Sans JP', sans-serif`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.textAlign = 'left';
+    ctx.fillText(AppState.title || "UNTITLED", W * 0.025, H - H * 0.028);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#00f0ff';
+    ctx.fillText(AppState.difficulty || "IN Lv.15", W - W * 0.025, H - H * 0.028);
+    ctx.restore();
+}
+
+async function startGame() {
+    if (!AppState.chart || !AppState.audioBuffer) {
+        showToast("譜面と音源の両方を読み込んでください", "error");
+        return;
+    }
+
+    AppState.title = document.getElementById('songTitleInput').value.trim() || AppState.title || "UNTITLED";
+    AppState.difficulty = document.getElementById('difficultyInput').value.trim() || "IN Lv.15";
+
+    AppState.chart.judgeLines.forEach(line => {
+        line.notes.forEach(n => {
+            n.judged = false;
+            n.isHolding = false;
+            n.holdTickTimer = 0;
+            n.holdReleaseTimer = 0;
+            n.hitResult = null;
+        });
+    });
+
+    AppState.stats = { perfect: 0, good: 0, bad: 0, miss: 0, combo: 0, maxCombo: 0, score: 0 };
+    AppState.effects = [];
+    AppState.judgePopups = [];
+    AppState.pointers.clear();
+
+    document.getElementById('mainMenu').classList.add('hidden');
+    document.getElementById('pauseModal').classList.add('hidden');
+    document.getElementById('resultModal').classList.add('hidden');
+    document.getElementById('hudOverlay').classList.remove('hidden');
+
+    if (AppState.settings.autoPlay) {
+        document.getElementById('autoBadge').classList.remove('hidden');
+    } else {
+        document.getElementById('autoBadge').classList.add('hidden');
+    }
+
+    AppState.isPlaying = true;
+    AppState.isPaused = false;
+    resizeCanvas();
+
+    await soundEngine.startMusic(-1.2);
+}
+
+function pauseGame() {
+    if (!AppState.isPlaying || AppState.isPaused) return;
+    AppState.isPaused = true;
+    soundEngine.pauseOffset = soundEngine.getCurrentTime();
+    soundEngine.stopMusic();
+
+    document.getElementById('pauseSongTitle').textContent = `${AppState.title} [${AppState.difficulty}]`;
+    document.getElementById('pauseModal').classList.remove('hidden');
+}
+
+async function resumeGame() {
+    if (!AppState.isPlaying || !AppState.isPaused) return;
+    document.getElementById('pauseModal').classList.add('hidden');
+    AppState.isPaused = false;
+    await soundEngine.startMusic(soundEngine.pauseOffset);
+}
+
+function backToMenu() {
+    AppState.isPlaying = false;
+    AppState.isPaused = false;
+    soundEngine.stopMusic();
+
+    document.getElementById('hudOverlay').classList.add('hidden');
+    document.getElementById('pauseModal').classList.add('hidden');
+    document.getElementById('resultModal').classList.add('hidden');
+    document.getElementById('mainMenu').classList.remove('hidden');
+}
+
+function finishGame() {
+    AppState.isPlaying = false;
+    AppState.isPaused = false;
+    soundEngine.stopMusic();
+    document.getElementById('hudOverlay').classList.add('hidden');
+
+    const s = AppState.stats;
+    const total = Math.max(1, AppState.totalNotes);
+    const acc = ((s.perfect * 1.0 + s.good * 0.65) / total) * 100;
+
+    let rank = 'F';
+    let rankColor = 'text-slate-400';
+    if (s.score >= 1000000) { rank = 'φ'; rankColor = 'text-amber-300'; }
+    else if (s.score >= 960000) { rank = 'V'; rankColor = 'text-cyan-300'; }
+    else if (s.score >= 920000) { rank = 'S'; rankColor = 'text-amber-200'; }
+    else if (s.score >= 880000) { rank = 'A'; rankColor = 'text-emerald-300'; }
+    else if (s.score >= 820000) { rank = 'B'; rankColor = 'text-blue-300'; }
+    else if (s.score >= 700000) { rank = 'C'; rankColor = 'text-purple-300'; }
+
+    const clearEl = document.getElementById('resultClearType');
+    if (s.bad === 0 && s.miss === 0 && s.good === 0 && s.perfect > 0) {
+        clearEl.textContent = "ALL PERFECT (φ)";
+        clearEl.className = "px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 font-cyber font-bold text-sm tracking-widest";
+    } else if (s.bad === 0 && s.miss === 0 && s.perfect > 0) {
+        clearEl.textContent = "FULL COMBO";
+        clearEl.className = "px-3 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400 text-cyan-300 font-cyber font-bold text-sm tracking-widest";
+    } else {
+        clearEl.textContent = "TRACK COMPLETE";
+        clearEl.className = "px-3 py-1 rounded-lg bg-slate-800 border border-white/20 text-slate-300 font-cyber font-bold text-sm tracking-widest";
+    }
+
+    document.getElementById('resultSongTitle').textContent = AppState.title;
+    document.getElementById('resultDiffBadge').textContent = AppState.difficulty;
+    const rankEl = document.getElementById('resultRank');
+    rankEl.textContent = rank;
+    rankEl.className = `font-cyber text-6xl font-black ${rankColor} drop-shadow-[0_0_15px_rgba(0,240,255,0.4)]`;
+
+    document.getElementById('resultScore').textContent = s.score.toString().padStart(7, '0');
+    document.getElementById('resultMaxCombo').textContent = s.maxCombo.toString();
+    document.getElementById('resultAccuracy').textContent = `${acc.toFixed(2)}%`;
+
+    document.getElementById('resPerfect').textContent = s.perfect;
+    document.getElementById('resGood').textContent = s.good;
+    document.getElementById('resBad').textContent = s.bad;
+    document.getElementById('resMiss').textContent = s.miss;
+
+    document.getElementById('resultModal').classList.remove('hidden');
+}
+
+function getCanvasCoords(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+    return {
+        x: ((clientX - rect.left) / Math.max(1, rect.width)) * W,
+        y: ((clientY - rect.top) / Math.max(1, rect.height)) * H
+    };
+}
+
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    soundEngine.init();
+    for (const touch of Array.from(e.changedTouches)) {
+        const pos = getCanvasCoords(touch.clientX, touch.clientY);
+        AppState.pointers.set(touch.identifier, { x: pos.x, y: pos.y, justPressed: true, speed: 0 });
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const touch of Array.from(e.changedTouches)) {
+        const ptr = AppState.pointers.get(touch.identifier);
+        if (ptr) {
+            const pos = getCanvasCoords(touch.clientX, touch.clientY);
+            const dx = pos.x - ptr.x;
+            const dy = pos.y - ptr.y;
+            ptr.speed = Math.hypot(dx, dy);
+            ptr.x = pos.x;
+            ptr.y = pos.y;
+        }
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    for (const touch of Array.from(e.changedTouches)) {
+        AppState.pointers.delete(touch.identifier);
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', (e) => {
+    for (const touch of Array.from(e.changedTouches)) {
+        AppState.pointers.delete(touch.identifier);
+    }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    soundEngine.init();
+    const pos = getCanvasCoords(e.clientX, e.clientY);
+    AppState.pointers.set('mouse', { x: pos.x, y: pos.y, justPressed: true, speed: 0 });
+});
+
+window.addEventListener('mousemove', (e) => {
+    const ptr = AppState.pointers.get('mouse');
+    if (ptr) {
+        const pos = getCanvasCoords(e.clientX, e.clientY);
+        ptr.speed = Math.hypot(pos.x - ptr.x, pos.y - ptr.y);
+        ptr.x = pos.x;
+        ptr.y = pos.y;
+    }
+});
+
+window.addEventListener('mouseup', () => {
+    AppState.pointers.delete('mouse');
+});
+
+window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (calibrator.isActive && e.code === 'Space') {
+        e.preventDefault();
+        calibrator.recordTap();
+        return;
+    }
+    if (e.key === 'Escape') {
+        if (calibrator.isActive) { calibrator.close(); return; }
+        if (AppState.isPlaying) {
+            if (AppState.isPaused) resumeGame();
+            else pauseGame();
+        }
+        return;
+    }
+    if (!AppState.isPlaying || AppState.isPaused) return;
+    const keyId = `key_${e.code}`;
+    AppState.pointers.set(keyId, { x: 0, y: 0, justPressed: true, speed: 10, isKeyboard: true });
+});
+
+window.addEventListener('keyup', (e) => {
+    AppState.pointers.delete(`key_${e.code}`);
+});
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-emerald-950/95 border-emerald-400 text-emerald-200',
+        error: 'bg-rose-950/95 border-rose-400 text-rose-200',
+        info: 'bg-slate-900/95 border-cyan-400 text-cyan-200'
+    };
+    toast.className = `px-4 py-3 rounded-xl border ${colors[type] || colors.info} text-xs sm:text-sm font-bold shadow-xl backdrop-blur-md transition-all duration-300 transform translate-x-0 opacity-100`;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-x-4');
+        setTimeout(() => toast.remove(), 300);
+    }, 3200);
+}
+
+let dragCounter = 0;
+const dropOverlay = document.getElementById('dropOverlay');
+
+window.addEventListener('dragenter', (e) => { e.preventDefault(); dragCounter++; dropOverlay.classList.remove('hidden'); });
+window.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+window.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.add('hidden'); }
+});
+window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.add('hidden');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await handleDroppedOrSelectedFiles(e.dataTransfer.files);
+    }
+});
+
+document.getElementById('selectFilesBtn').addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('fileInput').click(); });
+document.getElementById('selectFolderBtn').addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('folderInput').click(); });
+document.getElementById('clearAssetsBtn').addEventListener('click', (e) => { e.stopPropagation(); clearAllAssets(); });
+document.getElementById('menuDropZone').addEventListener('click', () => { document.getElementById('fileInput').click(); });
+document.getElementById('fileInput').addEventListener('change', (e) => { handleDroppedOrSelectedFiles(e.target.files); e.target.value = ''; });
+document.getElementById('folderInput').addEventListener('change', (e) => { handleDroppedOrSelectedFiles(e.target.files); e.target.value = ''; });
+
+document.querySelectorAll('.fullscreenToggleBtn').forEach(btn => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+});
+
+document.getElementById('openCalibrationBtn').addEventListener('click', () => calibrator.open());
+document.getElementById('closeCalibrationBtn').addEventListener('click', () => calibrator.close());
+document.getElementById('calCancelBtn').addEventListener('click', () => calibrator.close());
+document.getElementById('calApplyBtn').addEventListener('click', () => calibrator.apply());
+document.getElementById('calResetBtn').addEventListener('click', () => calibrator.reset());
+
+const calTapPad = document.getElementById('calTapPad');
+calTapPad.addEventListener('touchstart', (e) => { e.preventDefault(); calibrator.recordTap(); }, { passive: false });
+calTapPad.addEventListener('mousedown', (e) => { if (e.button === 0) calibrator.recordTap(); });
+
+document.querySelectorAll('.calFineBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const delta = parseInt(btn.getAttribute('data-delta'), 10) || 0;
+        calibrator.adjustManual(delta);
+    });
+});
+
+document.getElementById('noteScaleSlider').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    AppState.settings.noteScale = val;
+    document.getElementById('noteScaleValText').textContent = `${val.toFixed(2)}x`;
+});
+
+document.getElementById('bgDimSlider').addEventListener('input', (e) => {
+    const val = parseInt(e.target.value, 10);
+    AppState.settings.bgBrightness = val / 100;
+    document.getElementById('bgDimValText').textContent = `${val}%`;
+});
+
+document.getElementById('speedSlider').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    AppState.settings.playbackRate = val;
+    document.getElementById('speedValText').textContent = `${val.toFixed(2)}x`;
+});
+
+document.getElementById('highlightToggle').addEventListener('change', (e) => { AppState.settings.multiHighlight = e.target.checked; });
+document.getElementById('autoPlayToggle').addEventListener('change', (e) => { AppState.settings.autoPlay = e.target.checked; });
+document.getElementById('hitSoundToggle').addEventListener('change', (e) => { AppState.settings.hitSound = e.target.checked; });
+
+document.getElementById('startGameBtn').addEventListener('click', startGame);
+document.getElementById('pauseBtn').addEventListener('click', pauseGame);
+document.getElementById('resumeBtn').addEventListener('click', resumeGame);
+document.getElementById('retryBtn').addEventListener('click', startGame);
+document.getElementById('pauseBackToMenuBtn').addEventListener('click', backToMenu);
+document.getElementById('resultRetryBtn').addEventListener('click', startGame);
+document.getElementById('resultMenuBtn').addEventListener('click', backToMenu);
+
+document.getElementById('openGuideBtn').addEventListener('click', () => { document.getElementById('guideModal').classList.remove('hidden'); });
+document.getElementById('closeGuideBtn').addEventListener('click', () => { document.getElementById('guideModal').classList.add('hidden'); });
+document.getElementById('closeGuideBtnBottom').addEventListener('click', () => { document.getElementById('guideModal').classList.add('hidden'); });
+
+window.onload = function () {
+    resizeCanvas();
+    updatePlayReadyState();
+    requestAnimationFrame(gameLoop);
+};
+</script>
+</body>
+</html>
