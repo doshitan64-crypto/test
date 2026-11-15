@@ -2110,6 +2110,12 @@ const blockAreaSceneCanvas = document.createElement('canvas');
 const blockAreaSceneCtx = blockAreaSceneCanvas.getContext('2d');
 const blockAreaMaskCanvas = document.createElement('canvas');
 const blockAreaMaskCtx = blockAreaMaskCanvas.getContext('2d');
+const blockAreaNoiseCanvas = document.createElement('canvas');
+const blockAreaNoiseCtx = blockAreaNoiseCanvas.getContext('2d', { willReadFrequently: true });
+const blockAreaNoiseCompositeCanvas = document.createElement('canvas');
+const blockAreaNoiseCompositeCtx = blockAreaNoiseCompositeCanvas.getContext('2d');
+let blockAreaNoiseFrame = 0;
+let blockAreaNoiseAccumulator = 0;
 let lastFrameTime = 0;
 
 function resizeCanvas() {
@@ -2163,6 +2169,8 @@ const JUDGE_WINDOW = { MISS: 0.160, BAD: 0.160, PERFECT_EARLY: 0.040, PERFECT_LA
 // sim-phi方式：判定線方向のズレと、判定線からの距離を分けて測る。
 function getPointerNoteMetrics(ptr, lineX, lineY, cosA, sinA, noteLocalX, noteWorldX, noteWorldY) {
     if (ptr.isKeyboard) return { offset: 0, distance: 0 };
+    // BlockArea内のタッチは、ノーツ判定に一切使用しない。
+    if (ptr.blockedByBlockArea) return { offset: Infinity, distance: Infinity };
     const dx = ptr.x - noteWorldX;
     const dy = ptr.y - noteWorldY;
     const along = dx * cosA + dy * sinA;
@@ -2260,42 +2268,18 @@ function gameLoop(timestamp) {
 // =========================================================================
 function blockAreaEase(t, type) {
     t = Math.max(0, Math.min(1, t));
-    const inOut = (x, fnIn, fnOut) => x < 0.5 ? fnIn(x * 2) / 2 : fnOut(x * 2 - 1) / 2 + 0.5;
-    const outIn = (x, fnOut, fnIn) => x < 0.5 ? fnOut(x * 2) / 2 : fnIn(x * 2 - 1) / 2 + 0.5;
-    const qIn = x => x * x, qOut = x => 1 - (1 - x) * (1 - x);
-    const cIn = x => x * x * x, cOut = x => 1 - Math.pow(1 - x, 3);
-    const qtIn = x => Math.pow(x, 4), qtOut = x => 1 - Math.pow(1 - x, 4);
-    const qnIn = x => Math.pow(x, 5), qnOut = x => 1 - Math.pow(1 - x, 5);
-    const sIn = x => 1 - Math.cos(x * Math.PI / 2), sOut = x => Math.sin(x * Math.PI / 2);
-    const eIn = x => x === 0 ? 0 : Math.pow(2, 10 * x - 10);
-    const eOut = x => x === 1 ? 1 : 1 - Math.pow(2, -10 * x);
-    const ci = x => 1 - Math.sqrt(Math.max(0, 1 - x * x));
-    const co = x => Math.sqrt(Math.max(0, 1 - (x - 1) * (x - 1)));
-    const c1 = 1.70158, c3 = c1 + 1;
-    const bIn = x => c3 * x * x * x - c1 * x * x;
-    const bOut = x => 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-    const elIn = x => x === 0 || x === 1 ? x : -Math.pow(2, 10 * x - 10) * Math.sin((x * 10 - 10.75) * 2 * Math.PI / 3);
-    const elOut = x => x === 0 || x === 1 ? x : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * 2 * Math.PI / 3) + 1;
-    const bounceOut = x => {
-        const n = 7.5625, d = 2.75;
-        if (x < 1 / d) return n * x * x;
-        if (x < 2 / d) { x -= 1.5 / d; return n * x * x + 0.75; }
-        if (x < 2.5 / d) { x -= 2.25 / d; return n * x * x + 0.9375; }
-        x -= 2.625 / d; return n * x * x + 0.984375;
-    };
-    const bounceIn = x => 1 - bounceOut(1 - x);
     switch (Number(type)) {
-        case 0: return t;
-        case 1: return qIn(t); case 2: return qOut(t); case 3: return inOut(t, qIn, qOut); case 4: return outIn(t, qOut, qIn);
-        case 5: return cIn(t); case 6: return cOut(t); case 7: return inOut(t, cIn, cOut); case 8: return outIn(t, cOut, cIn);
-        case 9: return qtIn(t); case 10: return qtOut(t); case 11: return inOut(t, qtIn, qtOut); case 12: return outIn(t, qtOut, qtIn);
-        case 13: return qnIn(t); case 14: return qnOut(t); case 15: return inOut(t, qnIn, qnOut); case 16: return outIn(t, qnOut, qnIn);
-        case 17: return sIn(t); case 18: return sOut(t); case 19: return inOut(t, sIn, sOut); case 20: return outIn(t, sOut, sIn);
-        case 21: return eIn(t); case 22: return eOut(t); case 23: return inOut(t, eIn, eOut); case 24: return outIn(t, eOut, eIn);
-        case 25: return ci(t); case 26: return co(t); case 27: return inOut(t, ci, co); case 28: return outIn(t, co, ci);
-        case 29: return elIn(t); case 30: return elOut(t); case 31: return inOut(t, elIn, elOut); case 32: return outIn(t, elOut, elIn);
-        case 33: return bIn(t); case 34: return bOut(t); case 35: return inOut(t, bIn, bOut); case 36: return outIn(t, bOut, bIn);
-        case 37: return t < 0.5 ? 0 : 1;
+        case 1: return t * t;
+        case 2: return 1 - (1 - t) * (1 - t);
+        case 3: return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        case 4: return t * t * t;
+        case 5: return 1 - Math.pow(1 - t, 3);
+        case 7: return Math.pow(t, 4);
+        case 8: return 1 - Math.pow(1 - t, 4);
+        case 10: return Math.pow(t, 5);
+        case 11: return 1 - Math.pow(1 - t, 5);
+        case 13: return 0;
+        case 14: return 1;
         default: return t;
     }
 }
@@ -2334,15 +2318,75 @@ function blockAreaKeyframeValue(events, time, getValue, getEase, fallback) {
     return getValue(events[events.length - 1]);
 }
 
-function drawBlockAreaMask(chart, chartTime, W, H, dpr) {
-    const areas = Array.isArray(chart.blockAreas) ? chart.blockAreas : [];
-    if (!areas.length) return false;
 
+// Phigros/Phiraの噪域（noise area）をCanvasで近似描画。
+// マスク内だけに#A80040のノイズを重ね、時間とフレームに応じて模様を更新する。
+function drawBlockAreaNoise(chartTime, W, H, dpr, dt) {
+    const pixelW = canvas.width;
+    const pixelH = canvas.height;
+    // 低解像度の粒状ノイズを拡大し、毎フレーム全面を乱数生成しない。
+    const nw = Math.max(96, Math.ceil(W / 5));
+    const nh = Math.max(54, Math.ceil(H / 5));
+    if (blockAreaNoiseCanvas.width !== nw || blockAreaNoiseCanvas.height !== nh) {
+        blockAreaNoiseCanvas.width = nw;
+        blockAreaNoiseCanvas.height = nh;
+    }
+    if (blockAreaNoiseCompositeCanvas.width !== pixelW || blockAreaNoiseCompositeCanvas.height !== pixelH) {
+        blockAreaNoiseCompositeCanvas.width = pixelW;
+        blockAreaNoiseCompositeCanvas.height = pixelH;
+    }
+    const image = blockAreaNoiseCtx.createImageData(nw, nh);
+    const data = image.data;
+    const seed = Math.floor(chartTime * 24) + blockAreaNoiseFrame * 7919;
+    let state = (seed ^ 0x9e3779b9) >>> 0;
+    for (let i = 0; i < data.length; i += 4) {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        const grain = (state >>> 24) - 128;
+        const pulse = Math.sin((i / 4 % nw) * 0.17 + chartTime * 4.2) * 9;
+        const shade = Math.max(-42, Math.min(42, grain * 0.30 + pulse));
+        data[i] = Math.max(0, Math.min(255, 168 + shade * 0.55));
+        data[i + 1] = Math.max(0, Math.min(255, 0 + shade * 0.18));
+        data[i + 2] = Math.max(0, Math.min(255, 64 + shade * 0.35));
+        data[i + 3] = 235;
+    }
+    blockAreaNoiseCtx.putImageData(image, 0, 0);
+
+    // 低解像度ノイズを画面サイズへ拡大してから、マスク内だけを残す。
+    const nctx = blockAreaNoiseCompositeCtx;
+    nctx.setTransform(1, 0, 0, 1, 0, 0);
+    nctx.globalCompositeOperation = 'source-over';
+    nctx.clearRect(0, 0, pixelW, pixelH);
+    nctx.imageSmoothingEnabled = false;
+    nctx.drawImage(blockAreaNoiseCanvas, 0, 0, pixelW, pixelH);
+    nctx.globalCompositeOperation = 'destination-in';
+    nctx.drawImage(blockAreaMaskCanvas, 0, 0);
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 0.92;
+    ctx.drawImage(blockAreaNoiseCompositeCanvas, 0, 0);
+    ctx.restore();
+
+    blockAreaNoiseAccumulator += Math.max(0, dt);
+    if (blockAreaNoiseAccumulator >= 1 / 24) {
+        blockAreaNoiseAccumulator %= 1 / 24;
+        blockAreaNoiseFrame++;
+    }
+}
+
+function drawBlockAreaMask(chart, chartTime, W, H, dpr, buildOnly = false) {
+    const areas = Array.isArray(chart.blockAreas) ? chart.blockAreas : [];
     const active = areas.filter(area =>
         chartTime >= safeNum(area.enableTime, Infinity) &&
         chartTime <= safeNum(area.disableTime, -Infinity)
     );
-    if (!active.length) return false;
+
+    // 有効なBlockAreaがないフレームは古いマスクを残さない。
+    if (!active.length) {
+        blockAreaMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
+        blockAreaMaskCtx.clearRect(0, 0, canvas.width, canvas.height);
+        return false;
+    }
 
     const pixelW = canvas.width;
     const pixelH = canvas.height;
@@ -2355,15 +2399,16 @@ function drawBlockAreaMask(chart, chartTime, W, H, dpr) {
     mctx.globalCompositeOperation = 'source-over';
     mctx.clearRect(0, 0, pixelW, pixelH);
 
-    // BlockAreaは通常領域の集合からsubtract領域を差し引く。
-    // 画面全体を初期マスクにすると、subtract領域が有効な区間で極性が逆転する。
+    // 有効な領域にsubtract型が含まれる場合は、画面全体を基準にして
+    // 通常領域を追加し、subtract領域で順にくり抜く。
+    // active[0]だけを見ると、JSON上の並び順によって極性が誤る。
+    if (active.some(area => Boolean(area.isSubtract))) {
+        mctx.fillStyle = '#A80040';
+        mctx.fillRect(0, 0, pixelW, pixelH);
+    }
     mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const drawOrder = [
-        ...active.filter(area => !area.isSubtract),
-        ...active.filter(area => Boolean(area.isSubtract))
-    ];
-    for (const area of drawOrder) {
+    for (const area of active) {
         const tr = area.topRightPercentage || {};
         const bl = area.bottomLeftPercentage || {};
         const left = safeNum(bl.x, 0) * W;
@@ -2381,136 +2426,32 @@ function drawBlockAreaMask(chart, chartTime, W, H, dpr) {
             area.rotateEvents, chartTime,
             e => safeNum(e.rotation, 0), e => e.easeType, 0
         );
-function blockAreaKeyframeValue(events, time, getValue, getEase, fallback) {
-    if (!Array.isArray(events) || events.length === 0) return fallback;
-    const sorted = events.slice().sort((a, b) => safeNum(a.time, 0) - safeNum(b.time, 0));
-    if (time <= safeNum(sorted[0].time, 0)) return getValue(sorted[0]);
-    for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1];
-        const next = sorted[i];
-        const nextTime = safeNum(next.time, 0);
-        if (time <= nextTime) {
-            const prevTime = safeNum(prev.time, 0);
-            const duration = nextTime - prevTime;
-            if (duration <= 0.000001) return getValue(next);
-            const progress = Math.max(0, Math.min(1, (time - prevTime) / duration));
-            const ease = getEase(next);
-            const eased = blockAreaEase(progress, ease);
-            const a = getValue(prev);
-            const b = getValue(next);
-            if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * eased;
-            if (a && b && typeof a === 'object' && typeof b === 'object') {
-                const out = {};
-                const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-                for (const key of keys) {
-                    const av = safeNum(a[key], safeNum(b[key], 0));
-                    const bv = safeNum(b[key], av);
-                    const axisEase = (ease && typeof ease === 'object') ? ease[key] : ease;
-                    const axisProgress = blockAreaEase(progress, axisEase);
-                    out[key] = av + (bv - av) * axisProgress;
-                }
-                return out;
-            }
-            return eased < 1 ? a : b;
-        }
-    }
-    return getValue(sorted[sorted.length - 1]);
-}
-
-function getLatestBlockAreaEvent(events, time) {
-    if (!Array.isArray(events) || events.length === 0) return null;
-    const sorted = events.slice().sort((a, b) => safeNum(a.time, 0) - safeNum(b.time, 0));
-    let current = sorted[0];
-    for (let i = 0; i < sorted.length; i++) {
-        if (safeNum(sorted[i].time, 0) <= time) {
-            current = sorted[i];
-        } else {
-            break;
-        }
-    }
-    return current;
-}
-
-function drawBlockAreaMask(chart, chartTime, W, H, dpr) {
-    const areas = Array.isArray(chart.blockAreas) ? chart.blockAreas : [];
-    if (!areas.length) return false;
-
-    const active = areas.filter(area => {
-        if (!area || typeof area !== 'object') return false;
-        const start = safeNum(area.enableTime ?? area.startTime, 0);
-        const end = safeNum(area.disableTime ?? area.endTime, 999999);
-        return chartTime >= start && chartTime <= end;
-    });
-    if (!active.length) return false;
-
-    const pixelW = canvas.width;
-    const pixelH = canvas.height;
-    if (blockAreaMaskCanvas.width !== pixelW || blockAreaMaskCanvas.height !== pixelH) {
-        blockAreaMaskCanvas.width = pixelW;
-        blockAreaMaskCanvas.height = pixelH;
-    }
-
-    const mctx = blockAreaMaskCtx;
-    mctx.save();
-    mctx.setTransform(1, 0, 0, 1, 0, 0);
-    mctx.globalCompositeOperation = 'source-over';
-    mctx.globalAlpha = 1;
-    mctx.clearRect(0, 0, pixelW, pixelH);
-    mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    const drawOrder = [
-        ...active.filter(area => !area.isSubtract),
-        ...active.filter(area => Boolean(area.isSubtract))
-    ];
-
-    for (const area of drawOrder) {
-        const tr = area.topRightPercentage || {};
-        const bl = area.bottomLeftPercentage || {};
-        const left = safeNum(bl.x, 0) * W;
-        const top = (1 - safeNum(tr.y, 1)) * H;
-        const width = (safeNum(tr.x, 1) - safeNum(bl.x, 0)) * W;
-        const height = (safeNum(tr.y, 1) - safeNum(bl.y, 0)) * H;
-        if (![left, top, width, height].every(Number.isFinite) || Math.abs(width * height) < 0.01) continue;
-
-        const baseCenterX = (safeNum(tr.x, 1) + safeNum(bl.x, 0)) / 2;
-        const baseCenterY = (safeNum(tr.y, 1) + safeNum(bl.y, 0)) / 2;
-
-        const move = blockAreaKeyframeValue(
-            area.moveEvents, chartTime,
-            e => e.endPosition || e.position || { x: baseCenterX, y: baseCenterY },
-            e => ({ x: e.easeTypeX ?? e.easeType ?? 0, y: e.easeTypeY ?? e.easeType ?? 0 }),
-            { x: baseCenterX, y: baseCenterY }
-        );
-        const rotation = blockAreaKeyframeValue(
-            area.rotateEvents, chartTime,
-            e => safeNum(e.rotation ?? e.angle, 0),
-            e => e.easeType ?? 0,
-            0
-        );
         const scale = blockAreaKeyframeValue(
             area.scaleEvents, chartTime,
             e => e.scale || { x: 1, y: 1 },
-            e => ({ x: e.easeTypeX ?? e.easeType ?? 0, y: e.easeTypeY ?? e.easeType ?? 0 }),
-            { x: 1, y: 1 }
+            e => ({ x: e.easeTypeX, y: e.easeTypeY }), { x: 1, y: 1 }
         );
+        const rotateEvent = area.rotateEvents && area.rotateEvents.length
+            ? area.rotateEvents.reduce((best, e) => safeNum(e.time, 0) <= chartTime ? e : best, area.rotateEvents[0]) : null;
+        const scaleEvent = area.scaleEvents && area.scaleEvents.length
+            ? area.scaleEvents.reduce((best, e) => safeNum(e.time, 0) <= chartTime ? e : best, area.scaleEvents[0]) : null;
+        const rotateAnchor = rotateEvent && rotateEvent.anchor ? rotateEvent.anchor : { x: 0.5, y: 0.5 };
+        const scaleAnchor = scaleEvent && scaleEvent.anchor ? scaleEvent.anchor : { x: 0.5, y: 0.5 };
 
-        const rotateEvent = getLatestBlockAreaEvent(area.rotateEvents, chartTime);
-        const scaleEvent = getLatestBlockAreaEvent(area.scaleEvents, chartTime);
-        const rotateAnchor = (rotateEvent && rotateEvent.anchor) ? rotateEvent.anchor : { x: 0.5, y: 0.5 };
-        const scaleAnchor = (scaleEvent && scaleEvent.anchor) ? scaleEvent.anchor : { x: 0.5, y: 0.5 };
-
+        // moveEvents.endPosition は移動量ではなく、BlockArea中心の目標座標。
+        // 元の矩形中心との差分だけ平行移動する（座標原点は左下）。
+        const baseCenterX = (safeNum(tr.x, 1) + safeNum(bl.x, 0)) / 2;
+        const baseCenterY = (safeNum(tr.y, 1) + safeNum(bl.y, 0)) / 2;
         const moveDeltaX = safeNum(move.x, baseCenterX) - baseCenterX;
         const moveDeltaY = safeNum(move.y, baseCenterY) - baseCenterY;
 
         mctx.save();
         mctx.translate(moveDeltaX * W, -moveDeltaY * H);
-
         const rax = safeNum(rotateAnchor.x, 0.5) * W;
         const ray = (1 - safeNum(rotateAnchor.y, 0.5)) * H;
         mctx.translate(rax, ray);
         mctx.rotate(-safeNum(rotation, 0) * Math.PI / 180);
         mctx.translate(-rax, -ray);
-
         const sax = safeNum(scaleAnchor.x, 0.5) * W;
         const say = (1 - safeNum(scaleAnchor.y, 0.5)) * H;
         mctx.translate(sax, say);
@@ -2518,39 +2459,40 @@ function drawBlockAreaMask(chart, chartTime, W, H, dpr) {
         mctx.translate(-sax, -say);
 
         mctx.globalCompositeOperation = area.isSubtract ? 'destination-out' : 'source-over';
-        mctx.fillStyle = '#ffffff';
+        mctx.fillStyle = '#fff';
         mctx.fillRect(left, top, width, height);
         mctx.restore();
     }
-    mctx.restore();
 
+    // 判定処理より前にマスクだけを構築する呼び出しでは、ここで終了する。
+    if (buildOnly) return true;
+
+    // 画面全体の描画結果にマスクを適用。HUDはこの後に描画する。
     if (blockAreaSceneCanvas.width !== pixelW || blockAreaSceneCanvas.height !== pixelH) {
         blockAreaSceneCanvas.width = pixelW;
         blockAreaSceneCanvas.height = pixelH;
     }
-
-    blockAreaSceneCtx.save();
     blockAreaSceneCtx.setTransform(1, 0, 0, 1, 0, 0);
-    blockAreaSceneCtx.globalCompositeOperation = 'source-over';
-    blockAreaSceneCtx.globalAlpha = 1;
     blockAreaSceneCtx.clearRect(0, 0, pixelW, pixelH);
     blockAreaSceneCtx.drawImage(canvas, 0, 0);
+    // BlockArea領域そのものを隠す（マスクの内外を反転）。
     blockAreaSceneCtx.globalCompositeOperation = 'destination-out';
     blockAreaSceneCtx.drawImage(blockAreaMaskCanvas, 0, 0);
-    blockAreaSceneCtx.restore();
+    blockAreaSceneCtx.globalCompositeOperation = 'source-over';
 
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, pixelW, pixelH);
     ctx.drawImage(blockAreaSceneCanvas, 0, 0);
     ctx.restore();
 
+    // ノーツ・背景を隠した領域にノイズを重ねる。ノイズ模様は停止せず時間更新する。
+    drawBlockAreaNoise(chartTime, W, H, dpr, AppState.isPaused ? 0 : (window.__lastBlockAreaDt || 0));
     return true;
 }
 
 function renderAndUpdate(dt) {
+    window.__lastBlockAreaDt = dt;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const W = Math.max(1, canvas.width / dpr);
     const H = Math.max(1, canvas.height / dpr);
@@ -2594,6 +2536,23 @@ function renderAndUpdate(dt) {
     const totalNotes = chart.totalNotes;
     const rawMusicTime = soundEngine.getCurrentTime();
     const chartTime = rawMusicTime - safeNum(chart.offset, 0) - (safeNum(AppState.settings.offsetMs, 0) / 1000);
+
+    // 現在時刻のBlockAreaマスクを判定前に構築し、各ポインターの位置を一度だけ検査する。
+    // これによりBlockArea内ではTap/Drag/Flick/Holdの入力を拾わない。
+    drawBlockAreaMask(chart, chartTime, W, H, dpr, true);
+    for (const [, ptr] of AppState.pointers) {
+        ptr.blockedByBlockArea = false;
+        if (ptr.isKeyboard) continue;
+        const px = Math.floor(ptr.x * dpr);
+        const py = Math.floor(ptr.y * dpr);
+        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) continue;
+        try {
+            ptr.blockedByBlockArea =
+                blockAreaMaskCtx.getImageData(px, py, 1, 1).data[3] > 127;
+        } catch (_) {
+            ptr.blockedByBlockArea = false;
+        }
+    }
 
     const maxEndTime = Math.max(1, safeNum(activeSong.audioDuration, 10)) + 1.2;
     if (rawMusicTime >= maxEndTime && !AppState.isPaused) {
@@ -2670,14 +2629,16 @@ function renderAndUpdate(dt) {
 
         for (let i = 0; i < line.notes.length; i++) {
             const note = line.notes[i];
-            if (note.judged) continue;
+            // Holdは判定確定後も、譜面上の本来の終端までは描画だけ継続する。
+            const isHoldVisualOnly = note.type === 3 && note.judged && chartTime < note.endTime;
+            if (note.judged && !isHoldVisualOnly) continue;
 
             const timeDiff = note.time - chartTime;
             const localX = note.positionX * W;
             const worldNoteX = lineX + localX * cosA;
             const worldNoteY = lineY + localX * sinA;
 
-            if (!AppState.isPaused) {
+            if (!AppState.isPaused && !isHoldVisualOnly) {
                 if (AppState.settings.autoPlay) {
                     if (note.type !== 3) {
                         if (timeDiff <= 0) {
@@ -2698,6 +2659,7 @@ function renderAndUpdate(dt) {
                             }
                             if (chartTime >= note.endTime) {
                                 note.judged = true;
+                                note.holdCompleted = true;
                                 registerJudgement('PERFECT', note, worldNoteX, worldNoteY, totalNotes);
                                 continue;
                             }
@@ -2775,6 +2737,7 @@ function renderAndUpdate(dt) {
                         // Hold終端はsim-phi同様、終端直前の0.2秒区間で確定する。
                         if (note.endTime - chartTime < 0.2) {
                             note.judged = true;
+                            note.holdCompleted = true;
                             registerJudgement(note.hitResult || 'PERFECT', note, worldNoteX, worldNoteY, totalNotes);
                             continue;
                         }
@@ -2793,8 +2756,10 @@ function renderAndUpdate(dt) {
                             }
                         } else {
                             note.judged = true;
+                            note.holdMissed = true;
+                            note.isHolding = false;
                             registerJudgement('MISS', note, worldNoteX, worldNoteY, totalNotes);
-                            continue;
+                            // MISS後も本来の終端までは暗いトーンで描画する。
                         }
                         if (note.endTime - chartTime <= 0) {
                             note.judged = true;
@@ -2847,6 +2812,8 @@ function renderAndUpdate(dt) {
                                     matchedNote.hitResult = result;
                                     matchedNote.holdTapTime = performance.now();
                                     matchedNote.holdBroken = false;
+                                    matchedNote.holdMissed = false;
+                                    matchedNote.holdCompleted = false;
                                     spawnHitEffect(hitX, hitY, '#ffd700');
                                 }
                             }
@@ -2893,7 +2860,7 @@ function renderAndUpdate(dt) {
 
                 ctx.save();
                 const isActivelyHeld = note.isHolding && note.holdReleaseTimer <= 0.02;
-                ctx.globalAlpha = isActivelyHeld ? 0.96 : 0.85;
+                ctx.globalAlpha = note.holdMissed ? 0.48 : (isActivelyHeld ? 0.96 : 0.85);
                 const halfW = noteWidthBase * 0.46;
 
                 if (isHL && Number.isFinite(localX) && Number.isFinite(halfW) && halfW > 0) {
@@ -2911,8 +2878,8 @@ function renderAndUpdate(dt) {
                     ctx.lineWidth = 2.5;
                     ctx.strokeRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
                 } else {
-                    ctx.fillStyle = isActivelyHeld ? '#67f3ff' : '#00d8ff';
-                    if (isActivelyHeld) { ctx.shadowColor = '#00f0ff'; ctx.shadowBlur = 14; }
+                    ctx.fillStyle = note.holdMissed ? '#704052' : (isActivelyHeld ? '#67f3ff' : '#00d8ff');
+                    if (isActivelyHeld && !note.holdMissed) { ctx.shadowColor = '#00f0ff'; ctx.shadowBlur = 14; }
                     ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
                     ctx.shadowBlur = 0;
                 }
@@ -2928,7 +2895,7 @@ function renderAndUpdate(dt) {
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(localX - noteWidthBase * 0.48, yHead - noteHeightBase * 0.42, noteWidthBase * 0.96, noteHeightBase * 0.84);
                     } else {
-                        ctx.fillStyle = '#ffffff';
+                        ctx.fillStyle = note.holdMissed ? '#9a7180' : '#ffffff';
                         ctx.fillRect(localX - noteWidthBase * 0.5, yHead - noteHeightBase * 0.5, noteWidthBase, noteHeightBase);
                     }
                 }
@@ -3093,6 +3060,8 @@ async function startGame() {
             n.flickTouched = false;
             n.holdTapTime = 0;
             n.holdBroken = false;
+            n.holdMissed = false;
+            n.holdCompleted = false;
             n.holdStatus = 0;
         });
     });
@@ -3164,6 +3133,8 @@ function resetNotesForReviewSeek(song, rawMusicTime) {
             note.flickTouched = false;
             note.holdTapTime = 0;
             note.holdBroken = false;
+            note.holdMissed = false;
+            note.holdCompleted = false;
             note.holdStatus = 0;
 
             // シーク位置より十分前のノーツは通過済みとして扱い、MISSを発生させない。
