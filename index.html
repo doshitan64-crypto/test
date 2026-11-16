@@ -739,6 +739,35 @@ function safeNum(val, fallback = 0) {
     return Number.isFinite(n) ? n : fallback;
 }
 
+// 本家ノーツ画像のプリロード管理
+const NoteImages = {
+    tap: new Image(),
+    drag: new Image(),
+    flick: new Image(),
+    holdHead: new Image(),
+    holdBody: new Image(),
+    loaded: false
+};
+
+NoteImages.tap.src = 'note_tap.png';
+NoteImages.drag.src = 'note_drag.png';
+NoteImages.flick.src = 'note_flick.png';
+NoteImages.holdHead.src = 'note_hold_head.png';
+NoteImages.holdBody.src = 'note_hold_body.png';
+
+Promise.all([
+    new Promise(resolve => NoteImages.tap.onload = resolve),
+    new Promise(resolve => NoteImages.drag.onload = resolve),
+    new Promise(resolve => NoteImages.flick.onload = resolve),
+    new Promise(resolve => NoteImages.holdHead.onload = resolve),
+    new Promise(resolve => NoteImages.holdBody.onload = resolve)
+]).then(() => {
+    NoteImages.loaded = true;
+}).catch(() => {
+    console.warn("一部のノーツ画像の読み込みに失敗しました。フォールバック描画を使用します。");
+});
+
+
 const AppState = {
     isPlaying: false,
     isPaused: false,
@@ -1868,44 +1897,20 @@ class ChartParser {
 
     static calcFloorPosition(speedEvents, time) {
         if (!Array.isArray(speedEvents) || speedEvents.length === 0) return Math.max(0, time);
-
-        const events = speedEvents;
-        const getPositionInEvent = (ev, atTime) => {
-            const elapsed = atTime - ev.startTime;
-            const duration = ev.endTime - ev.startTime;
-            if (Number.isFinite(ev.endValue) && duration > 0.000001) {
-                return ev.floorPosition + ev.value * elapsed
-                    + ((ev.endValue - ev.value) * elapsed * elapsed) / (2 * duration);
+        if (time <= speedEvents[0].startTime) return (time - speedEvents[0].startTime) * speedEvents[0].value;
+        for (let i = 0; i < speedEvents.length; i++) {
+            const ev = speedEvents[i];
+            if (time >= ev.startTime && (time <= ev.endTime || i === speedEvents.length - 1)) {
+                const elapsed = time - ev.startTime;
+                const duration = ev.endTime - ev.startTime;
+                if (Number.isFinite(ev.endValue) && duration > 0.000001) {
+                    return ev.floorPosition + ev.value * elapsed
+                        + ((ev.endValue - ev.value) * elapsed * elapsed) / (2 * duration);
+                }
+                return ev.floorPosition + elapsed * ev.value;
             }
-            return ev.floorPosition + elapsed * ev.value;
-        };
-
-        if (time < events[0].startTime) {
-            return (time - events[0].startTime) * events[0].value;
         }
-
-        let previousEvent = null;
-        for (let i = 0; i < events.length; i++) {
-            const ev = events[i];
-
-            if (time >= ev.startTime && time <= ev.endTime) {
-                return getPositionInEvent(ev, time);
-            }
-
-            if (time > ev.endTime) {
-                previousEvent = ev;
-                continue;
-            }
-
-            // 速度イベント間の空白では、直前イベント終了時の位置を維持する。
-            // 0を返すと現在位置だけが判定線付近へ戻り、遠い未来のノーツまで
-            // 画面内に現れてしまう。
-            if (previousEvent) return getPositionInEvent(previousEvent, previousEvent.endTime);
-            return (time - ev.startTime) * ev.value;
-        }
-
-        // 最後のイベント終了後は、そのイベントの速度で位置を進める。
-        return previousEvent ? getPositionInEvent(previousEvent, time) : 0;
+        return 0;
     }
 }
 
@@ -3397,32 +3402,53 @@ function renderAndUpdate(dt) {
                 const noteWidth = noteWidthBase * noteSize;
                 const halfW = noteWidth * 0.46;
 
-                if (isHL && Number.isFinite(localX) && Number.isFinite(halfW) && halfW > 0) {
-                    const bodyGrad = ctx.createLinearGradient(localX - halfW, 0, localX + halfW, 0);
-                    bodyGrad.addColorStop(0, 'rgba(255, 215, 0, 0.92)');
-                    bodyGrad.addColorStop(0.25, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
-                    bodyGrad.addColorStop(0.75, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
-                    bodyGrad.addColorStop(1, 'rgba(255, 215, 0, 0.92)');
-                    ctx.fillStyle = bodyGrad;
-                    if (isActivelyHeld) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 14; }
-                    ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
-                    ctx.shadowBlur = 0;
-
-                    ctx.strokeStyle = '#ffd700';
-                    ctx.lineWidth = 2.5;
-                    ctx.strokeRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
-                } else {
-                    ctx.fillStyle = note.holdMissed ? '#704052' : (isActivelyHeld ? '#67f3ff' : '#00d8ff');
-                    if (isActivelyHeld && !note.holdMissed) { ctx.shadowColor = '#00f0ff'; ctx.shadowBlur = 14; }
-                    ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
-                    ctx.shadowBlur = 0;
+                if (isHL) {
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 14;
                 }
+
+                if (NoteImages.loaded && NoteImages.holdBody.complete && NoteImages.holdBody.naturalWidth > 0) {
+                    ctx.drawImage(NoteImages.holdBody, localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                    if (isHL) {
+                        ctx.shadowBlur = 0;
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = 2.5;
+                        ctx.strokeRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                    }
+                } else {
+                    if (isHL && Number.isFinite(localX) && Number.isFinite(halfW) && halfW > 0) {
+                        const bodyGrad = ctx.createLinearGradient(localX - halfW, 0, localX + halfW, 0);
+                        bodyGrad.addColorStop(0, 'rgba(255, 215, 0, 0.92)');
+                        bodyGrad.addColorStop(0.25, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
+                        bodyGrad.addColorStop(0.75, isActivelyHeld ? 'rgba(130, 245, 255, 0.95)' : 'rgba(0, 225, 255, 0.82)');
+                        bodyGrad.addColorStop(1, 'rgba(255, 215, 0, 0.92)');
+                        ctx.fillStyle = bodyGrad;
+                        ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                        ctx.shadowBlur = 0;
+
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = 2.5;
+                        ctx.strokeRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                    } else {
+                        ctx.fillStyle = note.holdMissed ? '#704052' : (isActivelyHeld ? '#67f3ff' : '#00d8ff');
+                        if (isActivelyHeld && !note.holdMissed) { ctx.shadowColor = '#00f0ff'; ctx.shadowBlur = 14; }
+                        ctx.fillRect(localX - halfW, bodyTop, halfW * 2, bodyHeight);
+                        ctx.shadowBlur = 0;
+                    }
+                }
+                ctx.shadowBlur = 0;
 
                 if (!note.isHolding) {
                     ctx.globalAlpha = noteAlpha;
                     if (isHL || isActivelyHeld) {
                         ctx.shadowColor = isHL ? '#ffd700' : '#00f0ff';
                         ctx.shadowBlur = 16;
+                    }
+                    if (NoteImages.loaded && NoteImages.holdHead.complete && NoteImages.holdHead.naturalWidth > 0) {
+                        const headAspect = NoteImages.holdHead.naturalHeight / Math.max(1, NoteImages.holdHead.naturalWidth);
+                        const drawH = Math.max(noteHeightBase, noteWidth * headAspect);
+                        ctx.drawImage(NoteImages.holdHead, localX - noteWidth * 0.5, yHead - drawH * 0.5, noteWidth, drawH);
+                    } else if (isHL || isActivelyHeld) {
                         ctx.fillStyle = isHL ? '#ffd700' : '#a5f3fc';
                         ctx.fillRect(localX - noteWidth * 0.54, yHead - noteHeightBase * 0.65, noteWidth * 1.08, noteHeightBase * 1.3);
                         ctx.shadowBlur = 0;
@@ -3447,29 +3473,43 @@ function renderAndUpdate(dt) {
                 if (isHL) {
                     ctx.shadowColor = '#ffd700';
                     ctx.shadowBlur = 18;
-                    ctx.fillStyle = '#ffd700';
-                    ctx.fillRect(-nw * 0.56, -nh * 0.72, nw * 1.12, nh * 1.44);
-                    ctx.shadowBlur = 0;
                 }
 
-                if (note.type === 1) {
-                    ctx.fillStyle = '#00f0ff';
-                    ctx.fillRect(-nw * 0.5, -nh * 0.5, nw, nh);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(-nw * 0.46, -nh * 0.25, nw * 0.92, nh * 0.5);
-                } else if (note.type === 2) {
-                    ctx.fillStyle = '#ffd700';
-                    ctx.fillRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                let targetImg = null;
+                if (note.type === 1) targetImg = NoteImages.tap;
+                else if (note.type === 2) targetImg = NoteImages.drag;
+                else if (note.type === 4) targetImg = NoteImages.flick;
+
+                if (NoteImages.loaded && targetImg && targetImg.complete && targetImg.naturalWidth > 0) {
+                    const aspect = targetImg.naturalHeight / Math.max(1, targetImg.naturalWidth);
+                    const drawH = Math.max(nh, nw * aspect);
+                    ctx.drawImage(targetImg, -nw * 0.5, -drawH * 0.5, nw, drawH);
+                } else {
                     if (isHL) {
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 1.5;
-                        ctx.strokeRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                        ctx.fillStyle = '#ffd700';
+                        ctx.fillRect(-nw * 0.56, -nh * 0.72, nw * 1.12, nh * 1.44);
+                        ctx.shadowBlur = 0;
                     }
-                } else if (note.type === 4) {
-                    ctx.fillStyle = '#ff2a6d';
-                    ctx.fillRect(-nw * 0.5, -nh * 0.55, nw, nh * 1.1);
-                    ctx.fillStyle = isHL ? '#ffd700' : '#ffffff';
-                    ctx.fillRect(-nw * 0.42, -nh * 0.2, nw * 0.84, nh * 0.4);
+
+                    if (note.type === 1) {
+                        ctx.fillStyle = '#00f0ff';
+                        ctx.fillRect(-nw * 0.5, -nh * 0.5, nw, nh);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(-nw * 0.46, -nh * 0.25, nw * 0.92, nh * 0.5);
+                    } else if (note.type === 2) {
+                        ctx.fillStyle = '#ffd700';
+                        ctx.fillRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                        if (isHL) {
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = 1.5;
+                            ctx.strokeRect(-nw * 0.5, -nh * 0.45, nw, nh * 0.9);
+                        }
+                    } else if (note.type === 4) {
+                        ctx.fillStyle = '#ff2a6d';
+                        ctx.fillRect(-nw * 0.5, -nh * 0.55, nw, nh * 1.1);
+                        ctx.fillStyle = isHL ? '#ffd700' : '#ffffff';
+                        ctx.fillRect(-nw * 0.42, -nh * 0.2, nw * 0.84, nh * 0.4);
+                    }
                 }
                 ctx.restore();
             }
